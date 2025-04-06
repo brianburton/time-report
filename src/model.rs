@@ -13,17 +13,17 @@ lazy_static! {
     static ref LONG_MONTHS: HashSet<u16> = hashset!(1, 3, 5, 7, 8, 10, 12);
     static ref SHORT_MONTHS: HashSet<u16> = hashset!(4, 6, 9, 11);
     static ref DAY_ABBREVS: Vector<String> = vector!(
+        "MON".to_string(),
+        "TUE".to_string(),
+        "WED".to_string(),
         "THU".to_string(),
         "FRI".to_string(),
         "SAT".to_string(),
         "SUN".to_string(),
-        "MON".to_string(),
-        "TUE".to_string(),
-        "WED".to_string()
     );
 }
 
-pub const MIN_YEAR: u16 = 1970;
+pub const MIN_YEAR: u16 = 1973;
 pub const MAX_YEAR: u16 = 2300;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
@@ -348,7 +348,7 @@ mod tests {
 
     #[test]
     fn test_date_names() {
-        assert_eq!("THU", Date::min_date().day_abbrev());
+        assert_eq!("MON", Date::min_date().day_abbrev());
         assert_eq!("SUN", date(2025, 4, 6).day_abbrev());
         assert_eq!("MON", date(2025, 4, 7).day_abbrev());
         assert_eq!("TUE", date(2025, 4, 8).day_abbrev());
@@ -436,7 +436,7 @@ mod tests {
         assert_eq!(366, day_number(MIN_YEAR + 1, 1, 1));
 
         let base = day_number(2000, 12, 31);
-        assert_eq!(11323, base);
+        assert_eq!(10227, base);
 
         let cases = [
             (1, 1, base + 1),
