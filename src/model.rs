@@ -133,8 +133,60 @@ impl Date {
     }
 
     pub fn day_abbrev(&self) -> String {
-        let index = day_number(self.year, self.month, self.day) - 1;
+        let index = self.day_num() - 1;
         DAY_ABBREVS[index as usize % 7].clone()
+    }
+
+    pub fn day_num(&self) -> u32{
+        day_number(self.year, self.month, self.day)
+    }
+
+    pub fn week_num(&self) -> u32{
+        1 + (self.day_num() - 1) / 7
+    }
+
+    pub fn prev(&self) -> Date {
+        if self.day > 1 {
+            Date {
+                year: self.year,
+                month: self.month,
+                day: self.day - 1,
+            }
+        } else if self.month > 1 {
+            Date {
+                year: self.year,
+                month: self.month - 1,
+                day: days_in_month(self.year, self.month - 1),
+            }
+        } else {
+            Date {
+                year: self.year - 1,
+                month: 12,
+                day: 31,
+            }
+        }
+    }
+
+    pub fn next(&self) -> Date {
+        if self.day < days_in_month(self.year, self.month) {
+            Date {
+                year: self.year,
+                month: self.month,
+                day: self.day + 1,
+            }
+        } else if self.month < 12 {
+            Date {
+                year: self.year,
+                month: self.month + 1,
+                day: 1,
+            }
+        } else {
+            Date {
+                year: self.year + 1,
+                month: 1,
+                day: 1,
+            }
+        }
     }
 }
 
