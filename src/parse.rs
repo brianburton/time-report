@@ -295,6 +295,11 @@ pub fn parse_file(file_path: &str) -> Result<Vector<DayEntry>, ParseFailure> {
             let project_times = parse_time_line(&line)?;
             if let Some(day_entry) = &mut current_day {
                 day_entry.add_label(project_times);
+            } else {
+                return Err(ParseFailure::from_str(
+                    "file",
+                    format!("time line before any dates: {}", line).as_str(),
+                ));
             }
         } else if line == "END" {
             break;
