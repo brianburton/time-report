@@ -1,5 +1,6 @@
+mod core;
+mod model;
 mod parse;
-
 use std::env;
 
 fn main() {
