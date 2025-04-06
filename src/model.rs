@@ -1,8 +1,9 @@
-use std::fmt::Display;
+use std::{fmt::Display, ops::Range};
 
 use crate::core::{AppError, parse_digits};
+use chrono::Datelike;
 use derive_getters::Getters;
-use im::{HashSet, OrdSet, Vector, hashset};
+use im::{HashSet, OrdSet, Vector, hashset, vector};
 use lazy_static::lazy_static;
 use regex::Regex;
 
@@ -11,6 +12,15 @@ lazy_static! {
     static ref DATE_RE: Regex = Regex::new(r"(\d{2})/(\d{2})/(\d{4})").unwrap();
     static ref LONG_MONTHS: HashSet<u16> = hashset!(1, 3, 5, 7, 8, 10, 12);
     static ref SHORT_MONTHS: HashSet<u16> = hashset!(4, 6, 9, 11);
+    static ref DAY_ABBREVS: Vector<String> = vector!(
+        "THU".to_string(),
+        "FRI".to_string(),
+        "SAT".to_string(),
+        "SUN".to_string(),
+        "MON".to_string(),
+        "TUE".to_string(),
+        "WED".to_string()
+    );
 }
 
 pub const MIN_YEAR: u16 = 1970;
@@ -81,12 +91,50 @@ impl Date {
         Self::new(y, m, d)
     }
 
+    pub fn today() -> Date {
+        let d = chrono::Local::now();
+        Date {
+            year: d.year() as u16,
+            month: d.month() as u16,
+            day: d.day() as u16,
+        }
+    }
+
     pub fn min_date() -> Date {
         Date {
             year: MIN_YEAR,
             month: 1,
             day: 1,
         }
+    }
+
+    pub fn semimonth_for_date(&self) -> Range<Date> {
+        if self.day <= 15 {
+            Date {
+                year: self.year,
+                month: self.month,
+                day: 1,
+            }..Date {
+                year: self.year,
+                month: self.month,
+                day: 16,
+            }
+        } else {
+            Date {
+                year: self.year,
+                month: self.month,
+                day: 15,
+            }..Date {
+                year: self.year,
+                month: self.month,
+                day: days_in_month(self.year, self.month) + 1,
+            }
+        }
+    }
+
+    pub fn day_abbrev(&self) -> String {
+        let index = day_number(self.year, self.month, self.day) - 1;
+        DAY_ABBREVS[index as usize % 7].clone()
     }
 }
 
@@ -255,6 +303,10 @@ mod tests {
     use super::*;
     use im::{ordset, vector};
 
+    fn date(y: u16, m: u16, d: u16) -> Date {
+        Date::new(y, m, d).unwrap()
+    }
+
     fn time(h: u16, m: u16) -> Time {
         Time::new(h, m).unwrap()
     }
@@ -292,6 +344,18 @@ mod tests {
         assert_eq!(false, is_valid_date(MAX_YEAR + 1, 1, 1));
         assert_eq!(false, is_valid_date(MAX_YEAR, 13, 1));
         assert_eq!(false, is_valid_date(MAX_YEAR, 1, 32));
+    }
+
+    #[test]
+    fn test_date_names() {
+        assert_eq!("THU", Date::min_date().day_abbrev());
+        assert_eq!("SUN", date(2025, 4, 6).day_abbrev());
+        assert_eq!("MON", date(2025, 4, 7).day_abbrev());
+        assert_eq!("TUE", date(2025, 4, 8).day_abbrev());
+        assert_eq!("WED", date(2025, 4, 9).day_abbrev());
+        assert_eq!("THU", date(2025, 4, 10).day_abbrev());
+        assert_eq!("FRI", date(2025, 4, 11).day_abbrev());
+        assert_eq!("SAT", date(2025, 4, 12).day_abbrev());
     }
 
     #[test]
