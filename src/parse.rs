@@ -45,7 +45,7 @@ fn parse_time_range(text: &str) -> Result<TimeRange, AppError> {
 }
 
 // Function to parse the time ranges from a string (e.g., "0800-1200,1300-1310,1318-1708")
-fn parse_time_ranges(time_range_str: &str) -> Result<Vector<TimeRange>, AppError> {
+fn parse_time_ranges(time_range_str: &str) -> Result<(Vector<TimeRange>, bool), AppError> {
     let caps = TIME_RANGES_RE.captures(time_range_str).ok_or_else(|| {
         AppError::from_str(
             "time ranges",
@@ -61,7 +61,7 @@ fn parse_time_ranges(time_range_str: &str) -> Result<Vector<TimeRange>, AppError
         time_ranges.push_back(tr);
     }
 
-    Ok(time_ranges)
+    Ok((time_ranges, caps.get(3).is_some()))
 }
 
 fn is_date_line(line: &str) -> bool {
@@ -81,18 +81,21 @@ fn parse_date_line(line: &str) -> Result<Date, AppError> {
 }
 
 // Function to parse label and time ranges (e.g., "client,project: 0800-1200,1300-1310")
-fn parse_time_line(line: &str) -> Result<ProjectTimes, AppError> {
+fn parse_time_line(line: &str) -> Result<(ProjectTimes, bool), AppError> {
     let caps = TIME_LINE_RE
         .captures(line)
         .ok_or_else(|| AppError::from_str("time line", "not a time line"))?;
     let client = caps[1].to_string();
     let project = caps[2].to_string();
-    let time_ranges = parse_time_ranges(&caps[3])?;
-    ProjectTimes::new(client.as_str(), project.as_str(), &time_ranges)
+    let (time_ranges, incomplete) = parse_time_ranges(&caps[3])?;
+    Ok((
+        ProjectTimes::new(client.as_str(), project.as_str(), &time_ranges)?,
+        incomplete,
+    ))
 }
 
 // Function to parse a file into day entries
-pub fn parse_file(file_path: &str) -> Result<Vector<DayEntry>, AppError> {
+pub fn parse_file(file_path: &str) -> Result<(Vector<DayEntry>, Vector<String>), AppError> {
     let path = Path::new(file_path);
     let file = File::open(path).map_err(|e| AppError::from_error("i/o", e))?;
     let reader = io::BufReader::new(file);
@@ -101,6 +104,7 @@ pub fn parse_file(file_path: &str) -> Result<Vector<DayEntry>, AppError> {
     let mut have_date = false;
     let mut date = Date::min_date();
     let mut projects = Vector::new();
+    let mut warnings = Vector::new();
 
     for raw_line in reader.lines() {
         let line = raw_line
@@ -117,7 +121,15 @@ pub fn parse_file(file_path: &str) -> Result<Vector<DayEntry>, AppError> {
             projects.clear();
         } else if is_time_line(line.as_str()) {
             if have_date {
-                projects.push_back(parse_time_line(&line)?);
+                let (time_ranges, incomplete) = parse_time_line(&line)?;
+                if incomplete {
+                    warnings.push_back(format!(
+                        "incomplete time range: date: {} line: {}",
+                        &date,
+                        line.as_str()
+                    ));
+                }
+                projects.push_back(time_ranges);
             } else {
                 return Err(AppError::from_str(
                     "file",
@@ -138,7 +150,7 @@ pub fn parse_file(file_path: &str) -> Result<Vector<DayEntry>, AppError> {
         days.push_back(DayEntry::new(date, &projects));
     }
 
-    Ok(days)
+    Ok((days, warnings))
 }
 
 #[cfg(test)]
@@ -163,7 +175,7 @@ mod tests {
             time_range(13, 18, 17, 8),
         ];
 
-        assert_eq!(parse_time_ranges(time_range_str).unwrap(), expected);
+        assert_eq!(parse_time_ranges(time_range_str).unwrap().0, expected);
     }
 
     #[test]
@@ -195,7 +207,7 @@ mod tests {
                 time_range(13, 18, 17, 8),
             ],
         );
-        assert_eq!(parse_time_line(line).unwrap(), expected.unwrap());
+        assert_eq!(parse_time_line(line).unwrap().0, expected.unwrap());
     }
 
     #[test]
@@ -223,7 +235,7 @@ mod tests {
 
         let result = parse_file(file_path).unwrap();
 
-        assert_eq!(result, expected);
+        assert_eq!(result.0, expected);
 
         std::fs::remove_file(file_path).unwrap(); // Clean up test file
     }
