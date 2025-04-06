@@ -52,6 +52,14 @@ pub struct Date {
 }
 
 impl Date {
+    pub fn min_date() -> Date {
+        Date {
+            year: MIN_YEAR,
+            month: 1,
+            day: 1,
+        }
+    }
+
     pub fn new(year: u16, month: u16, day: u16) -> Result<Date, AppError> {
         if !is_valid_date(year, month, day) {
             Err(AppError::from_str("date", "not a valid date"))
@@ -110,22 +118,11 @@ pub struct DayEntry {
 }
 
 impl DayEntry {
-    pub fn new(date: Date) -> Self {
-        DayEntry {
-            date,
-            projects: Vector::new(),
-        }
-    }
-
-    pub fn new2(date: Date, projects: &Vector<ProjectTimes>) -> Self {
+    pub fn new(date: Date, projects: &Vector<ProjectTimes>) -> Self {
         DayEntry {
             date,
             projects: projects.clone(),
         }
-    }
-
-    pub fn add_project(&mut self, project_times: ProjectTimes) {
-        self.projects.push_back(project_times);
     }
 }
 

@@ -88,12 +88,14 @@ fn parse_time_line(line: &str) -> Result<ProjectTimes, AppError> {
 
 // Function to parse a file into day entries
 pub fn parse_file(file_path: &str) -> Result<Vector<DayEntry>, AppError> {
-    let mut day_entries = Vector::new();
     let path = Path::new(file_path);
     let file = File::open(path).map_err(|e| AppError::from_error("i/o", e))?;
     let reader = io::BufReader::new(file);
 
-    let mut current_day: Option<DayEntry> = None;
+    let mut days = Vector::new();
+    let mut have_date = false;
+    let mut date = Date::min_date();
+    let mut projects = Vector::new();
 
     for raw_line in reader.lines() {
         let line = raw_line
@@ -101,15 +103,16 @@ pub fn parse_file(file_path: &str) -> Result<Vector<DayEntry>, AppError> {
             .map_err(|e| AppError::from_error("i/o", e))?;
 
         if is_date_line(line.as_str()) {
-            if let Some(day_entry) = current_day.take() {
-                day_entries.push_back(day_entry);
+            if have_date {
+                days.push_back(DayEntry::new(date, &projects));
+            } else {
+                have_date = true;
             }
-            let date = parse_date_line(&line)?;
-            current_day = Some(DayEntry::new(date));
+            date = parse_date_line(&line)?;
+            projects.clear();
         } else if is_time_line(line.as_str()) {
-            let project_times = parse_time_line(&line)?;
-            if let Some(day_entry) = &mut current_day {
-                day_entry.add_project(project_times);
+            if have_date {
+                projects.push_back(parse_time_line(&line)?);
             } else {
                 return Err(AppError::from_str(
                     "file",
@@ -126,11 +129,11 @@ pub fn parse_file(file_path: &str) -> Result<Vector<DayEntry>, AppError> {
         }
     }
 
-    if let Some(day_entry) = current_day {
-        day_entries.push_back(day_entry);
+    if have_date {
+        days.push_back(DayEntry::new(date, &projects));
     }
 
-    Ok(day_entries)
+    Ok(days)
 }
 
 #[cfg(test)]
@@ -196,7 +199,7 @@ mod tests {
         let file_path = "test_file.txt";
         std::fs::write(file_path, file_content).unwrap();
 
-        let expected = vector!(DayEntry::new2(
+        let expected = vector!(DayEntry::new(
             Date::new(2025, 4, 3).unwrap(),
             &vector!(
                 ProjectTimes::new(
