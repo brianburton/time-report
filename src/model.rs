@@ -259,10 +259,10 @@ fn day_of_year(year: u16, month: u16, day: u16) -> u16 {
     }
 }
 
-fn day_number(year: u16, month: u16, day: u16) -> u16 {
-    let past_year_days = (MIN_YEAR..year).fold(0, |s, y| s + days_in_year(y));
-    let past_month_days = (1..month).fold(0, |s, m| s + days_in_month(year, m));
-    past_year_days + past_month_days + day
+fn day_number(year: u16, month: u16, day: u16) -> u32 {
+    let past_year_days = (MIN_YEAR..year).fold(0, |s: u32, y: u16| s + days_in_year(y) as u32);
+    let past_month_days: u32 = (1..month).fold(0, |s, m| s + days_in_month(year, m) as u32);
+    past_year_days + past_month_days + day as u32
 }
 
 fn is_valid_date(year: u16, month: u16, day: u16) -> bool {
