@@ -1,6 +1,8 @@
+use std::fmt::Display;
+
 use crate::core::{AppError, parse_digits};
 use derive_getters::Getters;
-use im::{HashSet, Vector, hashset};
+use im::{HashSet, OrdSet, Vector, hashset};
 use lazy_static::lazy_static;
 use regex::Regex;
 
@@ -17,6 +19,12 @@ pub const MAX_YEAR: u16 = 2300;
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub struct Time {
     minute: u16,
+}
+
+impl Display for Time {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:02}{:02}", self.hour(), self.minute())
+    }
 }
 
 impl Time {
@@ -51,15 +59,13 @@ pub struct Date {
     day: u16,
 }
 
-impl Date {
-    pub fn min_date() -> Date {
-        Date {
-            year: MIN_YEAR,
-            month: 1,
-            day: 1,
-        }
+impl Display for Date {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:02}/{:02}/{:04}", self.month, self.day, self.year)
     }
+}
 
+impl Date {
     pub fn new(year: u16, month: u16, day: u16) -> Result<Date, AppError> {
         if !is_valid_date(year, month, day) {
             Err(AppError::from_str("date", "not a valid date"))
@@ -74,12 +80,26 @@ impl Date {
         let y: u16 = parse_digits("year", &DATE_RE, text, 3)?;
         Self::new(y, m, d)
     }
+
+    pub fn min_date() -> Date {
+        Date {
+            year: MIN_YEAR,
+            month: 1,
+            day: 1,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Getters)]
 pub struct TimeRange {
     from: Time,
     to: Time,
+}
+
+impl Display for TimeRange {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}-{}", self.from, self.to)
+    }
 }
 
 impl TimeRange {
@@ -90,6 +110,25 @@ impl TimeRange {
             Ok(TimeRange { from, to })
         }
     }
+
+    pub fn distinct(a: &TimeRange, b: &TimeRange) -> bool {
+        a.to <= b.from || a.from >= b.to
+    }
+}
+
+fn find_overlapping_time_ranges(time_ranges: &Vector<TimeRange>) -> OrdSet<TimeRange> {
+    let mut conflicts = OrdSet::new();
+    let mut visited = OrdSet::new();
+    time_ranges.iter().for_each(|candidate| {
+        visited.iter().for_each(|checked| {
+            if !TimeRange::distinct(candidate, checked) {
+                conflicts.insert(checked.clone());
+                conflicts.insert(candidate.clone());
+            }
+        });
+        visited.insert(candidate.clone());
+    });
+    conflicts
 }
 
 #[derive(Debug, PartialEq, Clone, Getters)]
@@ -100,14 +139,28 @@ pub struct ProjectTimes {
 }
 
 impl ProjectTimes {
-    pub fn new(client: &str, project: &str, time_ranges: &Vector<TimeRange>) -> ProjectTimes {
+    pub fn new(
+        client: &str,
+        project: &str,
+        time_ranges: &Vector<TimeRange>,
+    ) -> Result<ProjectTimes, AppError> {
         let mut sorted = time_ranges.clone();
+        let conflicts = find_overlapping_time_ranges(time_ranges);
+        if !conflicts.is_empty() {
+            let detail = format!(
+                "conflicting time ranges: client: {} project: {} conflicts: {}",
+                client,
+                project,
+                ordset_to_string(&conflicts)
+            );
+            return Err(AppError::from_str("projects", detail.as_str()));
+        }
         sorted.sort();
-        ProjectTimes {
+        Ok(ProjectTimes {
             client: client.to_string(),
             project: project.to_string(),
             time_ranges: sorted,
-        }
+        })
     }
 }
 
@@ -171,12 +224,43 @@ fn is_valid_date(year: u16, month: u16, day: u16) -> bool {
         && day <= days_in_month(year, month)
 }
 
+fn vector_to_string<T: Clone + Display>(values: &Vector<T>) -> String {
+    let mut x = String::new();
+    x.push_str("[");
+    values.iter().for_each(|i| {
+        if x.len() > 1 {
+            x.push_str(",");
+        }
+        x.push_str(i.to_string().as_str());
+    });
+    x.push_str("]");
+    x
+}
+
+fn ordset_to_string<T: Clone + Ord + Display>(values: &OrdSet<T>) -> String {
+    let mut x = String::new();
+    x.push_str("[");
+    values.iter().for_each(|i| {
+        if x.len() > 1 {
+            x.push_str(",");
+        }
+        x.push_str(i.to_string().as_str());
+    });
+    x.push_str("]");
+    x
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use im::{ordset, vector};
 
     fn time(h: u16, m: u16) -> Time {
         Time::new(h, m).unwrap()
+    }
+
+    fn time_range(h1: u16, m1: u16, h2: u16, m2: u16) -> TimeRange {
+        TimeRange::new(time(h1, m1), time(h2, m2)).unwrap()
     }
 
     #[test]
@@ -336,5 +420,95 @@ mod tests {
         [1996, 2000, 2004]
             .iter()
             .for_each(|y| assert_eq!(29, days_in_month(*y, 2)));
+    }
+
+    #[test]
+    fn test_time_range_distinct() {
+        // separated
+        assert!(TimeRange::distinct(
+            &time_range(1, 0, 3, 0),
+            &time_range(5, 0, 7, 0),
+        ));
+        assert!(TimeRange::distinct(
+            &time_range(5, 0, 7, 0),
+            &time_range(1, 0, 3, 0),
+        ));
+
+        // adjacent
+        assert!(TimeRange::distinct(
+            &time_range(1, 0, 3, 0),
+            &time_range(3, 0, 5, 0),
+        ));
+        assert!(TimeRange::distinct(
+            &time_range(3, 0, 5, 0),
+            &time_range(1, 0, 3, 0),
+        ));
+
+        // overlapping
+        assert!(!TimeRange::distinct(
+            &time_range(1, 0, 3, 0),
+            &time_range(2, 59, 5, 0),
+        ));
+        assert!(!TimeRange::distinct(
+            &time_range(3, 0, 5, 0),
+            &time_range(1, 0, 3, 1),
+        ));
+        assert!(!TimeRange::distinct(
+            &time_range(3, 0, 5, 0),
+            &time_range(3, 1, 4, 59),
+        ));
+        assert!(!TimeRange::distinct(
+            &time_range(3, 0, 5, 0),
+            &time_range(3, 0, 4, 59),
+        ));
+        assert!(!TimeRange::distinct(
+            &time_range(3, 0, 5, 0),
+            &time_range(3, 1, 5, 0),
+        ));
+    }
+
+    #[test]
+    fn test_find_overlapping_time_ranges() {
+        let t13 = time_range(1, 0, 3, 0);
+        let t24 = time_range(2, 0, 4, 0);
+        let t34 = time_range(3, 0, 4, 0);
+        let t35 = time_range(3, 0, 5, 0);
+        let t56 = time_range(5, 0, 6, 0);
+        let empty: Vector<TimeRange> = vector!();
+        let no_match: OrdSet<TimeRange> = ordset!();
+
+        assert_eq!(no_match, find_overlapping_time_ranges(&empty));
+        assert_eq!(
+            no_match,
+            find_overlapping_time_ranges(&vector!(t13.clone(), t35.clone()))
+        );
+        assert_eq!(
+            ordset!(t13.clone(), t35.clone(), t24.clone()),
+            find_overlapping_time_ranges(&vector!(t13.clone(), t35.clone(), t24.clone()))
+        );
+        assert_eq!(
+            no_match,
+            find_overlapping_time_ranges(&vector!(t13.clone(), t35.clone(), t56.clone()))
+        );
+        assert_eq!(
+            ordset!(t34.clone(), t35.clone()),
+            find_overlapping_time_ranges(&vector!(
+                t13.clone(),
+                t34.clone(),
+                t35.clone(),
+                t56.clone()
+            ))
+        );
+    }
+
+    #[test]
+    fn test_displays() {
+        assert_eq!("0102", time(1, 2).to_string());
+        assert_eq!("2359", time(23, 59).to_string());
+        assert_eq!("0102-2359", time_range(1, 2, 23, 59).to_string());
+        assert_eq!("01/02/1995", Date::new(1995, 1, 2).unwrap().to_string());
+        assert_eq!("[1]", vector_to_string(&vector!(1)));
+        assert_eq!("[1,2]", vector_to_string(&vector!(1, 2)));
+        assert_eq!("[1,2]", ordset_to_string(&ordset!(2, 1)));
     }
 }

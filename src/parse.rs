@@ -79,11 +79,7 @@ fn parse_time_line(line: &str) -> Result<ProjectTimes, AppError> {
     let client = caps[1].to_string();
     let project = caps[2].to_string();
     let time_ranges = parse_time_ranges(&caps[3])?;
-    Ok(ProjectTimes::new(
-        client.as_str(),
-        project.as_str(),
-        &time_ranges,
-    ))
+    ProjectTimes::new(client.as_str(), project.as_str(), &time_ranges)
 }
 
 // Function to parse a file into day entries
@@ -190,7 +186,7 @@ mod tests {
                 time_range(13, 18, 17, 8),
             ],
         );
-        assert_eq!(parse_time_line(line).unwrap(), expected);
+        assert_eq!(parse_time_line(line).unwrap(), expected.unwrap());
     }
 
     #[test]
@@ -210,8 +206,9 @@ mod tests {
                         time_range(13, 0, 13, 10),
                         time_range(13, 18, 17, 8),
                     ),
-                ),
-                ProjectTimes::new("def", "uvw", &vector!(time_range(12, 0, 13, 0),),),
+                )
+                .unwrap(),
+                ProjectTimes::new("def", "uvw", &vector!(time_range(12, 0, 13, 0),),).unwrap(),
             ),
         ));
 
