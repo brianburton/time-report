@@ -10,8 +10,10 @@ use std::path::Path;
 lazy_static! {
     static ref COMMENT_RE: Regex = Regex::new(r"^(.*)\s*--.*$").unwrap();
     static ref TIME_RANGE_RE: Regex = Regex::new(r"(\d{4})-(\d{4})").unwrap();
-    static ref TIME_LINE_RE: Regex = Regex::new(r"([a-z]+),([- A-Za-z]+) *: (.*)").unwrap();
-    static ref DATE_LINE_RE: Regex = Regex::new(r"Date: [A-Za-z]+ (\d{2}/\d{2}/\d{4})").unwrap();
+    static ref TIME_RANGES_RE: Regex =
+        Regex::new(r"^(\d{4}-\d{4}(,\d{4}-\d{4})*)(,\d{4}-)?$").unwrap();
+    static ref TIME_LINE_RE: Regex = Regex::new(r"^([a-z]+),([- A-Za-z]+) *: (.*)$").unwrap();
+    static ref DATE_LINE_RE: Regex = Regex::new(r"^Date: [A-Za-z]+ (\d{2}/\d{2}/\d{4})$").unwrap();
 }
 
 fn remove_comments(source: &str) -> String {
@@ -44,9 +46,16 @@ fn parse_time_range(text: &str) -> Result<TimeRange, AppError> {
 
 // Function to parse the time ranges from a string (e.g., "0800-1200,1300-1310,1318-1708")
 fn parse_time_ranges(time_range_str: &str) -> Result<Vector<TimeRange>, AppError> {
+    let caps = TIME_RANGES_RE.captures(time_range_str).ok_or_else(|| {
+        AppError::from_str(
+            "time ranges",
+            &format!("invalid time ranges: {}", time_range_str),
+        )
+    })?;
+
     let mut time_ranges = Vector::new();
 
-    for cap in TIME_RANGE_RE.captures_iter(time_range_str) {
+    for cap in TIME_RANGE_RE.captures_iter(caps[1].to_string().as_str()) {
         let text = cap[0].to_string();
         let tr = parse_time_range(text.as_str())?;
         time_ranges.push_back(tr);
