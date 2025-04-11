@@ -133,59 +133,38 @@ impl Date {
     }
 
     pub fn day_abbrev(&self) -> String {
-        let index = self.day_num() - 1;
-        DAY_ABBREVS[index as usize % 7].clone()
+        DAY_ABBREVS[(self.day_num() % 7) as usize].clone()
     }
 
-    pub fn day_num(&self) -> u32{
+    pub fn day_num(&self) -> u32 {
         day_number(self.year, self.month, self.day)
     }
 
-    pub fn week_num(&self) -> u32{
-        1 + (self.day_num() - 1) / 7
+    pub fn week_num(&self) -> u32 {
+        self.day_num() / 7
     }
 
-    pub fn prev(&self) -> Date {
+    pub fn prev(&self) -> Result<Date, AppError> {
         if self.day > 1 {
-            Date {
-                year: self.year,
-                month: self.month,
-                day: self.day - 1,
-            }
+            Date::new(self.year, self.month, self.day - 1)
         } else if self.month > 1 {
-            Date {
-                year: self.year,
-                month: self.month - 1,
-                day: days_in_month(self.year, self.month - 1),
-            }
+            Date::new(
+                self.year,
+                self.month - 1,
+                days_in_month(self.year, self.month - 1),
+            )
         } else {
-            Date {
-                year: self.year - 1,
-                month: 12,
-                day: 31,
-            }
+            Date::new(self.year - 1, 12, 31)
         }
     }
 
-    pub fn next(&self) -> Date {
+    pub fn next(&self) -> Result<Date, AppError> {
         if self.day < days_in_month(self.year, self.month) {
-            Date {
-                year: self.year,
-                month: self.month,
-                day: self.day + 1,
-            }
+            Date::new(self.year, self.month, self.day + 1)
         } else if self.month < 12 {
-            Date {
-                year: self.year,
-                month: self.month + 1,
-                day: 1,
-            }
+            Date::new(self.year, self.month + 1, 1)
         } else {
-            Date {
-                year: self.year + 1,
-                month: 1,
-                day: 1,
-            }
+            Date::new(self.year + 1, self.month, self.day)
         }
     }
 }
@@ -314,7 +293,7 @@ fn day_of_year(year: u16, month: u16, day: u16) -> u16 {
 fn day_number(year: u16, month: u16, day: u16) -> u32 {
     let past_year_days = (MIN_YEAR..year).fold(0, |s: u32, y: u16| s + days_in_year(y) as u32);
     let past_month_days: u32 = (1..month).fold(0, |s, m| s + days_in_month(year, m) as u32);
-    past_year_days + past_month_days + day as u32
+    past_year_days + past_month_days + day as u32 - 1
 }
 
 fn is_valid_date(year: u16, month: u16, day: u16) -> bool {
@@ -484,11 +463,11 @@ mod tests {
 
     #[test]
     fn test_day_number() {
-        assert_eq!(1, day_number(MIN_YEAR, 1, 1));
-        assert_eq!(366, day_number(MIN_YEAR + 1, 1, 1));
+        assert_eq!(0, day_number(MIN_YEAR, 1, 1));
+        assert_eq!(365, day_number(MIN_YEAR + 1, 1, 1));
 
         let base = day_number(2000, 12, 31);
-        assert_eq!(10227, base);
+        assert_eq!(10226, base);
 
         let cases = [
             (1, 1, base + 1),
