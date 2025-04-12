@@ -63,9 +63,13 @@ impl Time {
     pub fn minute(&self) -> u16 {
         self.minute % 60
     }
+
+    pub fn minute_of_day(&self) -> u16 {
+        self.minute
+    }
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Getters, Copy)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Getters, Copy, Hash)]
 pub struct Date {
     year: u16,
     month: u16,
@@ -172,27 +176,33 @@ impl Date {
         }
     }
 
-    pub fn semimonth_for_date(&self) -> Range<Date> {
+    pub fn semimonth_for_date(&self) -> DateRange {
         if self.day <= 15 {
-            Date {
-                year: self.year,
-                month: self.month,
-                day: 1,
-            }..Date {
-                year: self.year,
-                month: self.month,
-                day: 16,
-            }
+            DateRange::new(
+                Date {
+                    year: self.year,
+                    month: self.month,
+                    day: 1,
+                },
+                Date {
+                    year: self.year,
+                    month: self.month,
+                    day: 16,
+                },
+            )
         } else {
-            Date {
-                year: self.year,
-                month: self.month,
-                day: 15,
-            }..Date {
-                year: self.year,
-                month: self.month,
-                day: days_in_month(self.year, self.month) + 1,
-            }
+            DateRange::new(
+                Date {
+                    year: self.year,
+                    month: self.month,
+                    day: 15,
+                },
+                Date {
+                    year: self.year,
+                    month: self.month,
+                    day: days_in_month(self.year, self.month) + 1,
+                },
+            )
         }
     }
 
@@ -232,21 +242,91 @@ impl Date {
         }
     }
 
-    fn iter(&self) -> DateIter {
-        DateIter { cur: Some(*self) }
+    pub fn iter(&self) -> DateIter {
+        DateIter {
+            cur: Some(*self),
+            last: Date::max_date(),
+        }
     }
 }
 
-struct DateIter {
+pub struct DateIter {
     cur: Option<Date>,
+    last: Date,
 }
 
 impl Iterator for DateIter {
     type Item = Date;
 
     fn next(&mut self) -> Option<Self::Item> {
+        match self.cur {
+            Some(d) => {
+                self.cur = match d.next().ok() {
+                    Some(dd) => {
+                        if dd <= self.last {
+                            Some(dd)
+                        } else {
+                            None
+                        }
+                    }
+                    None => None,
+                };
+                Some(d)
+            }
+            None => None,
+        }
+    }
+}
+
+#[derive(Debug, Getters)]
+pub struct DateRange {
+    first: Date,
+    last: Date,
+}
+
+impl DateRange {
+    pub fn new(first: Date, last: Date) -> DateRange {
+        DateRange { first, last }
+    }
+
+    pub fn iter(&self) -> DateIter {
+        DateIter {
+            cur: Some(self.first),
+            last: self.last,
+        }
+    }
+
+    pub fn contains(&self, d: &Date) -> bool {
+        self.first <= *d && *d <= self.last
+    }
+
+    pub fn to_full_weeks(&self) -> Result<DateRange, AppError> {
+        let first = self.first.this_monday()?;
+        let last = self.last.this_sunday()?;
+        Ok(DateRange { first, last })
+    }
+}
+
+struct DateRangeIter {
+    range: DateRange,
+    cur: Option<Date>,
+}
+
+impl Iterator for DateRangeIter {
+    type Item = Date;
+
+    fn next(&mut self) -> Option<Self::Item> {
         self.cur = match self.cur {
-            Some(d) => d.next().ok(),
+            Some(d) => match d.next().ok() {
+                Some(dd) => {
+                    if dd <= self.range.last {
+                        Some(dd)
+                    } else {
+                        None
+                    }
+                }
+                None => None,
+            },
             None => None,
         };
         self.cur
@@ -276,6 +356,10 @@ impl TimeRange {
 
     pub fn distinct(a: &TimeRange, b: &TimeRange) -> bool {
         a.to <= b.from || a.from >= b.to
+    }
+
+    pub fn duration(&self) -> u16 {
+        self.to.minute_of_day() - self.from.minute_of_day()
     }
 }
 
