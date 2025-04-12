@@ -1,4 +1,4 @@
-use std::{fmt::Display, ops::Range};
+use std::{fmt::Display, num::NonZero, ops::Range};
 
 use crate::core::{AppError, parse_digits};
 use chrono::Datelike;
@@ -62,7 +62,7 @@ impl Time {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Getters)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Getters, Copy)]
 pub struct Date {
     year: u16,
     month: u16,
@@ -105,6 +105,67 @@ impl Date {
             year: MIN_YEAR,
             month: 1,
             day: 1,
+        }
+    }
+
+    pub fn max_date() -> Date {
+        Date {
+            year: MAX_YEAR,
+            month: 12,
+            day: 31,
+        }
+    }
+
+    pub fn is_monday(&self) -> bool {
+        self.day_num() % 7 == 0
+    }
+
+    pub fn is_sunday(&self) -> bool {
+        self.day_num() % 7 == 6
+    }
+
+    pub fn this_monday(&self) -> Result<Date, AppError> {
+        if self.is_monday() {
+            Ok(self.clone())
+        } else {
+            self.prev_monday()
+        }
+    }
+
+    pub fn this_sunday(&self) -> Result<Date, AppError> {
+        if self.is_sunday() {
+            Ok(self.clone())
+        } else {
+            self.next_monday()?.prev()
+        }
+    }
+
+    pub fn prev_monday(&self) -> Result<Date, AppError> {
+        let days_past = (self.day_num() % 7) as u16;
+        let days_offset = if days_past == 0 { 7 } else { days_past };
+        if days_offset < self.day {
+            Date::new(self.year, self.month, self.day - days_offset)
+        } else if self.month > 1 {
+            Date::new(
+                self.year,
+                self.month - 1,
+                days_in_month(self.year, self.month - 1) + self.day - days_offset,
+            )
+        } else {
+            Date::new(self.year - 1, 12, 31 + self.day - days_offset)
+        }
+    }
+
+    pub fn next_monday(&self) -> Result<Date, AppError> {
+        let days_past = (self.day_num() % 7) as u16;
+        let days_offset = 7 - days_past;
+        let days_remaining = days_in_month(self.year, self.month) - self.day;
+        if days_offset < days_remaining {
+            Date::new(self.year, self.month, self.day + days_offset)
+        } else if self.month < 12 {
+            Date::new(self.year, self.month + 1, days_offset - days_remaining)
+        } else {
+            Date::new(self.year + 1, 1, days_offset - days_remaining)
         }
     }
 
@@ -164,8 +225,28 @@ impl Date {
         } else if self.month < 12 {
             Date::new(self.year, self.month + 1, 1)
         } else {
-            Date::new(self.year + 1, self.month, self.day)
+            Date::new(self.year + 1, 1, 1)
         }
+    }
+
+    fn iter(&self) -> DateIter {
+        DateIter { cur: Some(*self) }
+    }
+}
+
+struct DateIter {
+    cur: Option<Date>,
+}
+
+impl Iterator for DateIter {
+    type Item = Date;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.cur = match self.cur {
+            Some(d) => d.next().ok(),
+            None => None,
+        };
+        self.cur
     }
 }
 
@@ -605,5 +686,99 @@ mod tests {
         assert_eq!("[1]", vector_to_string(&vector!(1)));
         assert_eq!("[1,2]", vector_to_string(&vector!(1, 2)));
         assert_eq!("[1,2]", ordset_to_string(&ordset!(2, 1)));
+    }
+
+    #[test]
+    fn test_mondays() {
+        assert_eq!(false, date(1996, 2, 25).is_monday());
+        assert_eq!(true, date(1996, 2, 26).is_monday());
+        assert_eq!(false, date(1996, 2, 27).is_monday());
+        assert_eq!(false, date(1996, 2, 28).is_monday());
+        assert_eq!(false, date(1996, 2, 29).is_monday());
+        assert_eq!(false, date(1996, 3, 1).is_monday());
+        assert_eq!(false, date(1996, 3, 2).is_monday());
+        assert_eq!(false, date(1996, 3, 3).is_monday());
+        assert_eq!(true, date(1996, 3, 4).is_monday());
+
+        assert_eq!(Ok(date(1996, 2, 19)), date(1996, 2, 25).this_monday());
+        assert_eq!(Ok(date(1996, 2, 26)), date(1996, 2, 26).this_monday());
+        assert_eq!(Ok(date(1996, 2, 26)), date(1996, 2, 27).this_monday());
+        assert_eq!(Ok(date(1996, 2, 26)), date(1996, 2, 28).this_monday());
+        assert_eq!(Ok(date(1996, 2, 26)), date(1996, 2, 29).this_monday());
+        assert_eq!(Ok(date(1996, 2, 26)), date(1996, 3, 1).this_monday());
+        assert_eq!(Ok(date(1996, 2, 26)), date(1996, 3, 2).this_monday());
+        assert_eq!(Ok(date(1996, 2, 26)), date(1996, 3, 3).this_monday());
+        assert_eq!(Ok(date(1996, 3, 4)), date(1996, 3, 4).this_monday());
+        assert_eq!(Ok(date(1996, 12, 30)), date(1997, 1, 5).this_monday());
+
+        assert_eq!(Ok(date(1996, 2, 19)), date(1996, 2, 26).prev_monday());
+        assert_eq!(Ok(date(1996, 2, 26)), date(1996, 2, 27).prev_monday());
+        assert_eq!(Ok(date(1996, 2, 26)), date(1996, 2, 28).prev_monday());
+        assert_eq!(Ok(date(1996, 2, 26)), date(1996, 2, 29).prev_monday());
+        assert_eq!(Ok(date(1996, 2, 26)), date(1996, 3, 1).prev_monday());
+        assert_eq!(Ok(date(1996, 2, 26)), date(1996, 3, 2).prev_monday());
+        assert_eq!(Ok(date(1996, 2, 26)), date(1996, 3, 3).prev_monday());
+        assert_eq!(Ok(date(1996, 2, 26)), date(1996, 3, 4).prev_monday());
+        assert_eq!(Ok(date(1996, 3, 4)), date(1996, 3, 11).prev_monday());
+        assert_eq!(Ok(date(1996, 12, 30)), date(1997, 1, 6).prev_monday());
+
+        assert_eq!(Ok(date(1996, 3, 4)), date(1996, 2, 26).next_monday());
+        assert_eq!(Ok(date(1996, 3, 4)), date(1996, 2, 27).next_monday());
+        assert_eq!(Ok(date(1996, 3, 4)), date(1996, 2, 28).next_monday());
+        assert_eq!(Ok(date(1996, 3, 4)), date(1996, 2, 29).next_monday());
+        assert_eq!(Ok(date(1996, 3, 4)), date(1996, 3, 1).next_monday());
+        assert_eq!(Ok(date(1996, 3, 4)), date(1996, 3, 2).next_monday());
+        assert_eq!(Ok(date(1996, 3, 4)), date(1996, 3, 3).next_monday());
+        assert_eq!(Ok(date(1996, 3, 11)), date(1996, 3, 4).next_monday());
+        assert_eq!(Ok(date(1997, 1, 6)), date(1996, 12, 30).next_monday());
+    }
+
+    #[test]
+    fn test_sundays() {
+        assert_eq!(true, date(1996, 2, 25).is_sunday());
+        assert_eq!(false, date(1996, 2, 26).is_sunday());
+        assert_eq!(false, date(1996, 2, 27).is_sunday());
+        assert_eq!(false, date(1996, 2, 28).is_sunday());
+        assert_eq!(false, date(1996, 2, 29).is_sunday());
+        assert_eq!(false, date(1996, 3, 1).is_sunday());
+        assert_eq!(false, date(1996, 3, 2).is_sunday());
+        assert_eq!(true, date(1996, 3, 3).is_sunday());
+        assert_eq!(false, date(1996, 3, 4).is_sunday());
+
+        assert_eq!(Ok(date(1996, 2, 25)), date(1996, 2, 25).this_sunday());
+        assert_eq!(Ok(date(1996, 3, 3)), date(1996, 2, 26).this_sunday());
+        assert_eq!(Ok(date(1996, 3, 3)), date(1996, 2, 27).this_sunday());
+        assert_eq!(Ok(date(1996, 3, 3)), date(1996, 2, 28).this_sunday());
+        assert_eq!(Ok(date(1996, 3, 3)), date(1996, 2, 29).this_sunday());
+        assert_eq!(Ok(date(1996, 3, 3)), date(1996, 3, 1).this_sunday());
+        assert_eq!(Ok(date(1996, 3, 3)), date(1996, 3, 2).this_sunday());
+        assert_eq!(Ok(date(1996, 3, 3)), date(1996, 3, 3).this_sunday());
+        assert_eq!(Ok(date(1996, 3, 10)), date(1996, 3, 4).this_sunday());
+        assert_eq!(Ok(date(1997, 1, 5)), date(1996, 12, 31).this_sunday());
+    }
+
+    #[test]
+    fn test_date_next_prev() {
+        assert_eq!(Ok(date(1996, 12, 31)), date(1997, 1, 1).prev());
+        assert_eq!(Ok(date(1996, 1, 1)), date(1996, 1, 2).prev());
+        assert_eq!(Ok(date(1996, 1, 31)), date(1996, 2, 1).prev());
+        assert_eq!(Ok(date(1996, 2, 29)), date(1996, 3, 1).prev());
+
+        assert_eq!(Ok(date(1997, 1, 1)), date(1996, 12, 31).next());
+        assert_eq!(Ok(date(1996, 2, 1)), date(1996, 1, 31).next());
+        assert_eq!(Ok(date(1996, 2, 29)), date(1996, 2, 28).next());
+        assert_eq!(Ok(date(1996, 3, 1)), date(1996, 2, 29).next());
+        assert_eq!(Ok(date(1996, 4, 1)), date(1996, 3, 31).next());
+        assert_eq!(Ok(date(1996, 12, 1)), date(1996, 11, 30).next());
+    }
+
+    #[test]
+    fn test_date_iter() {
+        let start = date(MAX_YEAR, 12, 28);
+        let mut it = start.iter();
+        assert_eq!(Some(date(MAX_YEAR, 12, 29)), it.next());
+        assert_eq!(Some(date(MAX_YEAR, 12, 30)), it.next());
+        assert_eq!(Some(date(MAX_YEAR, 12, 31)), it.next());
+        assert_eq!(None, it.next());
     }
 }
