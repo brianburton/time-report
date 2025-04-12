@@ -257,10 +257,10 @@ fn render_dates_line(monday: Date) -> Result<String, AppError> {
 
 fn render_time(minutes: u32, hour_len: usize) -> String {
     if minutes == 0 {
-        format!("{:width$}", "-", width = hour_len + 3)
+        format!("{:>width$}", "-", width = hour_len + 3)
     } else {
         format!(
-            "{:width$}:{:02}",
+            "{:>width$}:{:02}",
             minutes / 60,
             minutes % 60,
             width = hour_len
@@ -277,26 +277,20 @@ fn render_times_line(
     let mut d = monday;
     loop {
         let minutes = week_data.project_day_total(project, &d.day_abbrev());
-        let time = if minutes == 0 {
-            "    -".to_string()
-        } else {
-            format!("{:2}:{:02}", minutes / 60, minutes % 60)
-        };
+        let time = render_time(minutes, 2);
         line += format!("{:pad$}{}", "", time, pad = COLUMN_PAD).as_ref();
         if d.is_sunday() {
             break;
         }
         d = d.next()?;
     }
-    let total_time = week_data.project_total(project);
-    let total_billable = week_data.project_billable(project);
+    let total_time = render_time(week_data.project_total(project), 3);
+    let total_billable = render_time(week_data.project_billable(project), 3);
     line += format!(
-        "{:pad$}{:3}:{:02}  {:3}:{:02}",
+        "{:pad$}{}  {}",
         "",
-        total_time / 60,
-        total_time % 60,
-        total_billable / 60,
-        total_billable % 60,
+        total_time,
+        total_billable,
         pad = COLUMN_PAD
     )
     .as_ref();
@@ -308,22 +302,16 @@ fn render_totals_line(monday: Date, week_data: &WeekData) -> Result<String, AppE
     let mut d = monday;
     loop {
         let minutes = week_data.day_total(&d.day_abbrev());
-        let time = format!("{:2}:{:02}", minutes / 60, minutes % 60);
+        let time = render_time(minutes, 2);
         line += format!("{:pad$}{}", "", time, pad = COLUMN_PAD).as_ref();
         if d.is_sunday() {
             break;
         }
         d = d.next()?;
     }
-    let total_time = week_data.week_total();
-    line += format!(
-        "{:pad$}{:3}:{:02}",
-        "",
-        total_time / 60,
-        total_time % 60,
-        pad = COLUMN_PAD
-    )
-    .as_ref();
+    let total_minutes = week_data.week_total();
+    let total_time = render_time(total_minutes, 3);
+    line += format!("{:pad$}{}", "", total_time, pad = COLUMN_PAD).as_ref();
     Ok(line)
 }
 
@@ -332,22 +320,16 @@ fn render_billables_line(monday: Date, week_data: &WeekData) -> Result<String, A
     let mut d = monday;
     loop {
         let minutes = week_data.day_billable(&d.day_abbrev());
-        let time = format!("{:2}:{:02}", minutes / 60, minutes % 60);
+        let time = render_time(minutes, 2);
         line += format!("{:pad$}{}", "", time, pad = COLUMN_PAD).as_ref();
         if d.is_sunday() {
             break;
         }
         d = d.next()?;
     }
-    let total_time = week_data.week_billable();
-    line += format!(
-        "{:pad$}{:3}:{:02}",
-        "",
-        total_time / 60,
-        total_time % 60,
-        pad = COLUMN_PAD
-    )
-    .as_ref();
+    let total_minutes = week_data.week_billable();
+    let total_time = render_time(total_minutes, 3);
+    line += format!("{:pad$}{}", "", total_time, pad = COLUMN_PAD).as_ref();
     Ok(line)
 }
 
