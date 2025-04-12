@@ -5,7 +5,9 @@ mod report;
 use core::AppError;
 use std::env;
 
-fn main() -> Result<(), core::AppError> {
+use model::{Date, DateRange};
+
+fn main() -> Result<(), AppError> {
     let mut args = env::args();
     let filename = args
         .nth(1)
@@ -19,16 +21,11 @@ fn main() -> Result<(), core::AppError> {
         filename.as_str()
     );
 
-    let first_date_str = args
-        .next()
-        .unwrap_or_else(|| model::Date::today().to_string());
+    let first_date_str = args.next().unwrap_or_else(|| Date::today().to_string());
     let last_date_str = args.next();
     let dates = match last_date_str {
-        Some(s) => model::DateRange::new(
-            model::Date::parse(&first_date_str)?,
-            model::Date::parse(&s)?,
-        ),
-        None => model::Date::parse(&first_date_str)?.semimonth_for_date(),
+        Some(s) => DateRange::new(Date::parse(&first_date_str)?, Date::parse(&s)?),
+        None => Date::parse(&first_date_str)?.semimonth_for_date(),
     };
     println!("Reporting from {} to {}", dates.first(), dates.last());
 

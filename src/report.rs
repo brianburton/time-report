@@ -1,6 +1,5 @@
 use im::{HashMap, OrdSet, Vector};
 use model::{Date, DateRange, DayEntry};
-use std::ops::Range;
 
 use crate::{
     core::AppError,
