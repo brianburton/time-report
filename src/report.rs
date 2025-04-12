@@ -344,6 +344,7 @@ fn render_report_data(report_data: &ReportData) -> Result<Vector<String>, AppErr
         }
         if !answer.is_empty() {
             answer.push_back("".to_string());
+            answer.push_back("".to_string());
         }
         let mut i = 0;
         answer.push_back(format!("{}{}", left_labels[i], create_day_labels()));

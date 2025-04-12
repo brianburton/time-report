@@ -187,7 +187,7 @@ impl Date {
                 Date {
                     year: self.year,
                     month: self.month,
-                    day: 16,
+                    day: 15,
                 },
             )
         } else {
@@ -200,7 +200,7 @@ impl Date {
                 Date {
                     year: self.year,
                     month: self.month,
-                    day: days_in_month(self.year, self.month) + 1,
+                    day: days_in_month(self.year, self.month),
                 },
             )
         }
