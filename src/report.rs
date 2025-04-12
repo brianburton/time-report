@@ -251,7 +251,7 @@ fn render_dates_line(monday: Date) -> Result<String, AppError> {
         }
         d = d.next()?;
     }
-    line += "    TOTALS  REPORT";
+    line += "   TOTALS  REPORT";
     Ok(line)
 }
 
