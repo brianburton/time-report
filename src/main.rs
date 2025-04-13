@@ -15,7 +15,7 @@ fn main() -> Result<(), AppError> {
 
     println!("Loading {}...", filename.as_str());
     let (all_day_entries, warnings) = parse::parse_file(filename.as_str())?;
-    warnings.iter().for_each(|w| println!("{w}"));
+    warnings.iter().for_each(|w| eprintln!("warning: {w}"));
     println!(
         "Loaded {} dates from {}",
         all_day_entries.len(),

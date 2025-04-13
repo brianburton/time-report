@@ -3,7 +3,7 @@ use regex::Regex;
 use std::error::Error;
 use std::fmt::Display;
 
-#[derive(Debug, Getters,PartialEq)]
+#[derive(Debug, Getters, PartialEq)]
 pub struct AppError {
     context: String,
     detail: String,

@@ -12,7 +12,7 @@ lazy_static! {
     static ref TIME_RANGE_RE: Regex = Regex::new(r"(\d{4})-(\d{4})").unwrap();
     static ref TIME_RANGES_RE: Regex =
         Regex::new(r"^(\d{4}-\d{4}(,\d{4}-\d{4})*)(,\d{4}-)?$").unwrap();
-    static ref TIME_LINE_RE: Regex = Regex::new(r"^([a-z]+),([- A-Za-z]+) *: (.*)$").unwrap();
+    static ref TIME_LINE_RE: Regex = Regex::new(r"^([a-z]+),([-/ A-Za-z0-9]+) *: *(.*)$").unwrap();
     static ref DATE_LINE_RE: Regex = Regex::new(r"^Date: [A-Za-z]+ (\d{2}/\d{2}/\d{4})$").unwrap();
 }
 
@@ -139,10 +139,7 @@ pub fn parse_file(file_path: &str) -> Result<(Vector<DayEntry>, Vector<String>),
         } else if line == "END" {
             break;
         } else if !line.is_empty() {
-            return Err(AppError::from_str(
-                "file",
-                format!("invalid line: {}", line).as_str(),
-            ));
+            warnings.push_back(format!("invalid line: line: {}", line.as_str()));
         }
     }
 
