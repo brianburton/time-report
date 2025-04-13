@@ -12,8 +12,9 @@ fn main() -> Result<(), AppError> {
     let filename = args
         .nth(1)
         .ok_or_else(|| AppError::from_str("usage", "missing file name"))?;
+
     println!("Loading {}...", filename.as_str());
-    let (all_day_entries, warnings) = parse::parse_file(filename.as_str()).unwrap();
+    let (all_day_entries, warnings) = parse::parse_file(filename.as_str())?;
     warnings.iter().for_each(|w| println!("{w}"));
     println!(
         "Loaded {} dates from {}",

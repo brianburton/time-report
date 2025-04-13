@@ -77,7 +77,7 @@ impl WeekData {
 
     fn project_day_total(&self, project: &Project, day_name: &str) -> u32 {
         let key = &Key::new(project, day_name);
-        self.minutes.get(key).map(|x| *x).unwrap_or(0)
+        self.minutes.get(key).copied().unwrap_or(0)
     }
 
     fn project_billable(&self, project: &Project) -> u32 {
@@ -113,7 +113,7 @@ impl WeekData {
             .iter()
             .filter(|(k, _)| filter(k))
             .map(|(_, v)| v)
-            .map(|m| mapper(m))
+            .map(mapper)
             .sum()
     }
 }
@@ -137,13 +137,12 @@ fn day_entries_in_range<'a>(
 fn unique_projects(day_entries: &Vector<&DayEntry>) -> OrdSet<Project> {
     day_entries
         .iter()
-        .map(|e| {
+        .flat_map(|e| {
             e.projects().iter().map(|p| Project {
                 client: p.client().clone(),
                 code: p.project().clone(),
             })
         })
-        .flatten()
         .collect()
 }
 
@@ -164,9 +163,9 @@ pub fn create_report(
     Ok(lines)
 }
 
-fn compute_report_data<'a>(
+fn compute_report_data(
     dates: DateRange,
-    all_day_entries: &'a Vector<DayEntry>,
+    all_day_entries: &Vector<DayEntry>,
 ) -> Result<ReportData, AppError> {
     let day_entries = day_entries_in_range(&dates, all_day_entries);
     if day_entries.is_empty() {
@@ -359,20 +358,20 @@ fn render_report_data(report_data: &ReportData) -> Result<Vector<String>, AppErr
             answer.push_back(format!(
                 "{}{}",
                 left_labels[i],
-                render_times_line(d, p, &week_data)?
+                render_times_line(d, p, week_data)?
             ));
         }
         i += 1;
         answer.push_back(format!(
             "{}{}",
             left_labels[i],
-            render_totals_line(d, &week_data)?
+            render_totals_line(d, week_data)?
         ));
         i += 1;
         answer.push_back(format!(
             "{}{}",
             left_labels[i],
-            render_billables_line(d, &week_data)?
+            render_billables_line(d, week_data)?
         ));
     }
     Ok(answer)
