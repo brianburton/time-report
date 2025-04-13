@@ -307,32 +307,6 @@ impl DateRange {
     }
 }
 
-struct DateRangeIter {
-    range: DateRange,
-    cur: Option<Date>,
-}
-
-impl Iterator for DateRangeIter {
-    type Item = Date;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.cur = match self.cur {
-            Some(d) => match d.next().ok() {
-                Some(dd) => {
-                    if dd <= self.range.last {
-                        Some(dd)
-                    } else {
-                        None
-                    }
-                }
-                None => None,
-            },
-            None => None,
-        };
-        self.cur
-    }
-}
-
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Getters)]
 pub struct TimeRange {
     from: Time,
