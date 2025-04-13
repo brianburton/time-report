@@ -58,14 +58,6 @@ impl WeekData {
         });
     }
 
-    fn project_day_billable(&self, project: &Project, day_name: &str) -> u32 {
-        let key = &Key::new(project, day_name);
-        self.minutes
-            .get(key)
-            .map(|x| billable_minutes(*x))
-            .unwrap_or(0)
-    }
-
     fn project_day_total(&self, project: &Project, day_name: &str) -> u32 {
         let key = &Key::new(project, day_name);
         self.minutes.get(key).copied().unwrap_or(0)
@@ -135,9 +127,11 @@ fn unique_projects(day_entries: &Vector<&DayEntry>) -> OrdSet<Project> {
 #[derive(Debug)]
 struct ReportData {
     weeks: HashMap<u32, WeekData>,
-    totals: WeekData,
     projects: OrdSet<Project>,
     dates: DateRange,
+    // TODO: add grand totals to bottom of report
+    #[allow(dead_code)]
+    totals: WeekData,
 }
 
 pub fn create_report(

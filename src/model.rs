@@ -115,14 +115,6 @@ impl Date {
         }
     }
 
-    pub fn max_date() -> Date {
-        Date {
-            year: MAX_YEAR,
-            month: 12,
-            day: 31,
-        }
-    }
-
     pub fn is_monday(&self) -> bool {
         self.day_num() % 7 == 0
     }
@@ -239,13 +231,6 @@ impl Date {
             Date::new(self.year, self.month + 1, 1)
         } else {
             Date::new(self.year + 1, 1, 1)
-        }
-    }
-
-    pub fn iter(&self) -> DateIter {
-        DateIter {
-            cur: Some(*self),
-            last: Date::max_date(),
         }
     }
 }
@@ -431,14 +416,6 @@ fn days_in_year(year: u16) -> u16 {
     if is_leap_year(year) { 366 } else { 365 }
 }
 
-fn day_of_year(year: u16, month: u16, day: u16) -> u16 {
-    if month == 1 {
-        day
-    } else {
-        day + (1..month).fold(0, |s, m| s + days_in_month(year, m))
-    }
-}
-
 fn day_number(year: u16, month: u16, day: u16) -> u32 {
     let past_year_days = (MIN_YEAR..year).fold(0, |s: u32, y: u16| s + days_in_year(y) as u32);
     let past_month_days: u32 = (1..month).fold(0, |s, m| s + days_in_month(year, m) as u32);
@@ -450,19 +427,6 @@ fn is_valid_date(year: u16, month: u16, day: u16) -> bool {
         && (1..=12).contains(&month)
         && day >= 1
         && day <= days_in_month(year, month)
-}
-
-fn vector_to_string<T: Clone + Display>(values: &Vector<T>) -> String {
-    let mut x = String::new();
-    x.push('[');
-    values.iter().for_each(|i| {
-        if x.len() > 1 {
-            x.push(',');
-        }
-        x.push_str(i.to_string().as_str());
-    });
-    x.push(']');
-    x
 }
 
 fn ordset_to_string<T: Clone + Ord + Display>(values: &OrdSet<T>) -> String {

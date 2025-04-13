@@ -57,78 +57,6 @@ fn test_date_names() {
 }
 
 #[test]
-fn test_day_of_year_leap_year() {
-    let cases = [
-        (1, 1, 1),
-        (1, 31, 31),
-        (2, 1, 32),
-        (2, 29, 60),
-        (3, 1, 61),
-        (3, 31, 91),
-        (4, 1, 92),
-        (4, 30, 121),
-        (5, 1, 122),
-        (5, 31, 152),
-        (6, 1, 153),
-        (6, 30, 182),
-        (7, 1, 183),
-        (7, 31, 213),
-        (8, 1, 214),
-        (8, 31, 244),
-        (9, 1, 245),
-        (9, 30, 274),
-        (10, 1, 275),
-        (10, 31, 305),
-        (11, 1, 306),
-        (11, 30, 335),
-        (12, 1, 336),
-        (12, 31, 366),
-    ];
-
-    cases
-        .iter()
-        .for_each(|(m, d, e)| assert_eq!(*e, day_of_year(2000, *m, *d)));
-
-    assert_eq!(366, days_in_year(2000));
-}
-
-#[test]
-fn test_day_of_year_normal_year() {
-    let cases = [
-        (1, 1, 1),
-        (1, 31, 31),
-        (2, 1, 32),
-        (2, 28, 59),
-        (3, 1, 60),
-        (3, 31, 90),
-        (4, 1, 91),
-        (4, 30, 120),
-        (5, 1, 121),
-        (5, 31, 151),
-        (6, 1, 152),
-        (6, 30, 181),
-        (7, 1, 182),
-        (7, 31, 212),
-        (8, 1, 213),
-        (8, 31, 243),
-        (9, 1, 244),
-        (9, 30, 273),
-        (10, 1, 274),
-        (10, 31, 304),
-        (11, 1, 305),
-        (11, 30, 334),
-        (12, 1, 335),
-        (12, 31, 365),
-    ];
-
-    cases
-        .iter()
-        .for_each(|(m, d, e)| assert_eq!(*e, day_of_year(2001, *m, *d)));
-
-    assert_eq!(365, days_in_year(2001));
-}
-
-#[test]
 fn test_day_number() {
     assert_eq!(0, day_number(MIN_YEAR, 1, 1));
     assert_eq!(365, day_number(MIN_YEAR + 1, 1, 1));
@@ -264,8 +192,6 @@ fn test_displays() {
     assert_eq!("2359", time(23, 59).to_string());
     assert_eq!("0102-2359", time_range(1, 2, 23, 59).to_string());
     assert_eq!("01/02/1995", Date::new(1995, 1, 2).unwrap().to_string());
-    assert_eq!("[1]", vector_to_string(&vector!(1)));
-    assert_eq!("[1,2]", vector_to_string(&vector!(1, 2)));
     assert_eq!("[1,2]", ordset_to_string(&ordset!(2, 1)));
 }
 
@@ -355,11 +281,14 @@ fn test_date_next_prev() {
 
 #[test]
 fn test_date_iter() {
-    let start = date(MAX_YEAR, 12, 28);
-    let mut it = start.iter();
-    assert_eq!(Some(date(MAX_YEAR, 12, 28)), it.next());
-    assert_eq!(Some(date(MAX_YEAR, 12, 29)), it.next());
-    assert_eq!(Some(date(MAX_YEAR, 12, 30)), it.next());
-    assert_eq!(Some(date(MAX_YEAR, 12, 31)), it.next());
+    let first = date(2000, 12, 28);
+    let last = date(2001, 1, 2);
+    let mut it = DateRange::new(first, last).iter();
+    assert_eq!(Some(date(2000, 12, 28)), it.next());
+    assert_eq!(Some(date(2000, 12, 29)), it.next());
+    assert_eq!(Some(date(2000, 12, 30)), it.next());
+    assert_eq!(Some(date(2000, 12, 31)), it.next());
+    assert_eq!(Some(date(2001, 1, 1)), it.next());
+    assert_eq!(Some(date(2001, 1, 2)), it.next());
     assert_eq!(None, it.next());
 }
