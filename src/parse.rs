@@ -114,19 +114,25 @@ pub fn parse_file(file_path: &str) -> Result<(Vector<DayEntry>, Vector<String>),
             .map_err(|e| AppError::from_error("i/o", e))?;
 
         if is_date_line(line.as_str()) {
+            let new_date = parse_date_line(&line)?;
             if have_date {
+                if new_date <= date {
+                    warnings.push_back(format!(
+                        "out of order dates:{line_num}: prev='{date}' new='{new_date}'"
+                    ));
+                }
                 days.push_back(DayEntry::new(date, &projects));
             } else {
                 have_date = true;
             }
-            date = parse_date_line(&line)?;
+            date = new_date;
             projects.clear();
         } else if is_time_line(line.as_str()) {
             if have_date {
                 let (time_ranges, incomplete) = parse_time_line(&line)?;
                 if incomplete {
                     warnings.push_back(format!(
-                        "incomplete time range:{line_num}: date: {} line: {}",
+                        "incomplete time range:{line_num}: date='{}' line='{}'",
                         &date,
                         line.as_str()
                     ));
@@ -135,13 +141,16 @@ pub fn parse_file(file_path: &str) -> Result<(Vector<DayEntry>, Vector<String>),
             } else {
                 return Err(AppError::from_str(
                     "file",
-                    format!("time line before any dates:{line_num}: {}", line).as_str(),
+                    format!("time line before any dates:{line_num}: '{}'", line).as_str(),
                 ));
             }
         } else if line == "END" {
             break;
         } else if !line.is_empty() {
-            warnings.push_back(format!("invalid line:{line_num}: line: {}", line.as_str()));
+            warnings.push_back(format!(
+                "invalid line:{line_num}: line: '{}'",
+                line.as_str()
+            ));
         }
     }
 
