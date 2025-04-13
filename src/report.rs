@@ -129,8 +129,6 @@ struct ReportData {
     weeks: HashMap<u32, WeekData>,
     projects: OrdSet<Project>,
     dates: DateRange,
-    // TODO: add grand totals to bottom of report
-    #[allow(dead_code)]
     totals: WeekData,
 }
 
@@ -311,6 +309,56 @@ fn render_billables_line(monday: Date, week_data: &WeekData) -> Result<String, A
     Ok(line)
 }
 
+fn render_grand_totals(projects: &OrdSet<Project>, totals_data: &WeekData) -> Vector<String> {
+    let mut answer = Vector::new();
+    let label_width = 3 + projects
+        .iter()
+        .map(|p| p.client().len() + p.code().len())
+        .max()
+        .unwrap_or(0);
+    answer.push_back("".to_string());
+    answer.push_back("".to_string());
+    answer.push_back(format!(
+        "{:lw$}{:pad$}{}{:pad$}{}",
+        "PROJECT",
+        "",
+        "TOTALS",
+        "",
+        "REPORT",
+        lw = label_width,
+        pad = COLUMN_PAD
+    ));
+    for p in projects {
+        answer.push_back(format!(
+            "{:lw$}{:pad$}{:6}{:pad$}{:6}",
+            format!("{},{}", p.client(), p.code()),
+            "",
+            render_time(totals_data.project_total(p), 3),
+            "",
+            render_time(totals_data.project_billable(p), 3),
+            lw = label_width,
+            pad = COLUMN_PAD,
+        ));
+    }
+    answer.push_back(format!(
+        "{:lw$}{:pad$}{}",
+        "TOTALS",
+        "",
+        render_time(totals_data.week_total(), 3),
+        lw = label_width,
+        pad = COLUMN_PAD
+    ));
+    answer.push_back(format!(
+        "{:lw$}{:pad$}{}",
+        "REPORT",
+        "",
+        render_time(totals_data.week_billable(), 3),
+        lw = label_width,
+        pad = COLUMN_PAD
+    ));
+    answer
+}
+
 fn render_report_data(report_data: &ReportData) -> Result<Vector<String>, AppError> {
     let mut answer = Vector::new();
 
@@ -354,5 +402,9 @@ fn render_report_data(report_data: &ReportData) -> Result<Vector<String>, AppErr
             render_billables_line(d, week_data)?
         ));
     }
+    answer.append(render_grand_totals(
+        &report_data.projects,
+        &report_data.totals,
+    ));
     Ok(answer)
 }
