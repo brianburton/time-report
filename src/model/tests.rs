@@ -254,12 +254,7 @@ fn test_find_overlapping_time_ranges() {
     );
     assert_eq!(
         ordset!(t34.clone(), t35.clone()),
-        find_overlapping_time_ranges(&vector!(
-            t13.clone(),
-            t34.clone(),
-            t35.clone(),
-            t56.clone()
-        ))
+        find_overlapping_time_ranges(&vector!(t13.clone(), t34.clone(), t35.clone(), t56.clone()))
     );
 }
 
@@ -362,6 +357,7 @@ fn test_date_next_prev() {
 fn test_date_iter() {
     let start = date(MAX_YEAR, 12, 28);
     let mut it = start.iter();
+    assert_eq!(Some(date(MAX_YEAR, 12, 28)), it.next());
     assert_eq!(Some(date(MAX_YEAR, 12, 29)), it.next());
     assert_eq!(Some(date(MAX_YEAR, 12, 30)), it.next());
     assert_eq!(Some(date(MAX_YEAR, 12, 31)), it.next());
