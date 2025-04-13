@@ -352,10 +352,15 @@ fn find_overlapping_time_ranges(time_ranges: &Vector<TimeRange>) -> OrdSet<TimeR
     conflicts
 }
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Hash, Getters)]
+pub struct Project {
+    client: String,
+    code: String,
+}
+
 #[derive(Debug, PartialEq, Clone, Getters)]
 pub struct ProjectTimes {
-    client: String,
-    project: String,
+    project: Project,
     time_ranges: Vector<TimeRange>,
 }
 
@@ -378,8 +383,10 @@ impl ProjectTimes {
         }
         sorted.sort();
         Ok(ProjectTimes {
-            client: client.to_string(),
-            project: project.to_string(),
+            project: Project {
+                client: client.to_string(),
+                code: project.to_string(),
+            },
             time_ranges: sorted,
         })
     }

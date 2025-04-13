@@ -1,16 +1,10 @@
 use im::{HashMap, OrdSet, Vector};
-use model::{Date, DateRange, DayEntry};
+use model::{Date, DateRange, DayEntry, Project};
 
 use crate::{
     core::AppError,
     model::{self, ProjectTimes},
 };
-
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
-struct Project {
-    client: String,
-    code: String,
-}
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone)]
 struct Key {
@@ -29,10 +23,7 @@ impl Key {
     fn from_project_times(project_times: &ProjectTimes, day_name: &str) -> Key {
         Key {
             day_name: day_name.to_string(),
-            project: Project {
-                client: project_times.client().to_string(),
-                code: project_times.project().to_string(),
-            },
+            project: project_times.project().clone(),
         }
     }
 }
@@ -137,12 +128,7 @@ fn day_entries_in_range<'a>(
 fn unique_projects(day_entries: &Vector<&DayEntry>) -> OrdSet<Project> {
     day_entries
         .iter()
-        .flat_map(|e| {
-            e.projects().iter().map(|p| Project {
-                client: p.client().clone(),
-                code: p.project().clone(),
-            })
-        })
+        .flat_map(|e| e.projects().iter().map(|p| p.project().clone()))
         .collect()
 }
 
@@ -209,12 +195,12 @@ fn compute_report_data(
 fn create_project_labels(projects: &OrdSet<Project>) -> Vector<String> {
     let width = 4 + projects
         .iter()
-        .map(|p| p.client.len() + p.code.len())
+        .map(|p| p.client().len() + p.code().len())
         .max()
         .unwrap_or(0);
     let mut labels: Vector<String> = projects
         .iter()
-        .map(|p| format!("{},{}", p.client, p.code))
+        .map(|p| format!("{},{}", p.client(), p.code()))
         .collect();
     labels.push_front("PROJECT".to_string());
     labels.push_front("".to_string());
