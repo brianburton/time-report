@@ -105,8 +105,10 @@ pub fn parse_file(file_path: &str) -> Result<(Vector<DayEntry>, Vector<String>),
     let mut date = Date::min_date();
     let mut projects = Vector::new();
     let mut warnings = Vector::new();
+    let mut line_num = 0;
 
     for raw_line in reader.lines() {
+        line_num += 1;
         let line = raw_line
             .map(|s| remove_comments(&s))
             .map_err(|e| AppError::from_error("i/o", e))?;
@@ -124,7 +126,7 @@ pub fn parse_file(file_path: &str) -> Result<(Vector<DayEntry>, Vector<String>),
                 let (time_ranges, incomplete) = parse_time_line(&line)?;
                 if incomplete {
                     warnings.push_back(format!(
-                        "incomplete time range: date: {} line: {}",
+                        "incomplete time range:{line_num}: date: {} line: {}",
                         &date,
                         line.as_str()
                     ));
@@ -133,13 +135,13 @@ pub fn parse_file(file_path: &str) -> Result<(Vector<DayEntry>, Vector<String>),
             } else {
                 return Err(AppError::from_str(
                     "file",
-                    format!("time line before any dates: {}", line).as_str(),
+                    format!("time line before any dates:{line_num}: {}", line).as_str(),
                 ));
             }
         } else if line == "END" {
             break;
         } else if !line.is_empty() {
-            warnings.push_back(format!("invalid line: line: {}", line.as_str()));
+            warnings.push_back(format!("invalid line:{line_num}: line: {}", line.as_str()));
         }
     }
 
