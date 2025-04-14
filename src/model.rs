@@ -51,8 +51,9 @@ impl Time {
     }
 
     pub fn parse(text: &str) -> Result<Time, AppError> {
-        let h = parse_digits_u16("hour", &TIME_RE, text, 1)?;
-        let m = parse_digits_u16("minute", &TIME_RE, text, 2)?;
+        let re_captures = TIME_RE.captures(text);
+        let h = parse_digits_u16("hour", text, &re_captures, 1)?;
+        let m = parse_digits_u16("minute", text, &re_captures, 2)?;
         Self::new(h, m)
     }
 
@@ -92,9 +93,10 @@ impl Date {
     }
 
     pub fn parse(text: &str) -> Result<Date, AppError> {
-        let m = parse_digits_u8("month", &DATE_RE, text, 1)?;
-        let d = parse_digits_u8("day", &DATE_RE, text, 2)?;
-        let y: u16 = parse_digits_u16("year", &DATE_RE, text, 3)?;
+        let re_captures = DATE_RE.captures(text);
+        let m = parse_digits_u8("month", text, &re_captures, 1)?;
+        let d = parse_digits_u8("day", text, &re_captures, 2)?;
+        let y = parse_digits_u16("year", text, &re_captures, 3)?;
         Self::new(y, m, d)
     }
 
