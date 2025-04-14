@@ -1,7 +1,7 @@
 use super::*;
 use im::{ordset, vector};
 
-fn date(y: u16, m: u16, d: u16) -> Date {
+fn date(y: u16, m: u8, d: u8) -> Date {
     Date::new(y, m, d).unwrap()
 }
 
@@ -15,6 +15,8 @@ fn time_range(h1: u16, m1: u16, h2: u16, m2: u16) -> TimeRange {
 
 #[test]
 fn test_time() {
+    assert_eq!(4, std::mem::size_of::<Date>());
+    assert_eq!(2, std::mem::size_of::<Time>());
     assert_eq!(0, time(0, 0).hour());
     assert_eq!(0, time(0, 59).hour());
     assert_eq!(1, time(1, 0).hour());

@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use crate::core::{AppError, parse_digits};
+use crate::core::{AppError, parse_digits_u8, parse_digits_u16};
 use chrono::Datelike;
 use derive_getters::Getters;
 use im::{HashSet, OrdSet, Vector, hashset, vector};
@@ -13,8 +13,8 @@ mod tests;
 lazy_static! {
     static ref TIME_RE: Regex = Regex::new(r"(\d{2})(\d{2})").unwrap();
     static ref DATE_RE: Regex = Regex::new(r"(\d{2})/(\d{2})/(\d{4})").unwrap();
-    static ref LONG_MONTHS: HashSet<u16> = hashset!(1, 3, 5, 7, 8, 10, 12);
-    static ref SHORT_MONTHS: HashSet<u16> = hashset!(4, 6, 9, 11);
+    static ref LONG_MONTHS: HashSet<u8> = hashset!(1, 3, 5, 7, 8, 10, 12);
+    static ref SHORT_MONTHS: HashSet<u8> = hashset!(4, 6, 9, 11);
     static ref DAY_ABBREVS: Vector<String> = vector!(
         "MON".to_string(),
         "TUE".to_string(),
@@ -51,8 +51,8 @@ impl Time {
     }
 
     pub fn parse(text: &str) -> Result<Time, AppError> {
-        let h = parse_digits("hour", &TIME_RE, text, 1)?;
-        let m = parse_digits("minute", &TIME_RE, text, 2)?;
+        let h = parse_digits_u16("hour", &TIME_RE, text, 1)?;
+        let m = parse_digits_u16("minute", &TIME_RE, text, 2)?;
         Self::new(h, m)
     }
 
@@ -72,8 +72,8 @@ impl Time {
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Getters, Copy, Hash)]
 pub struct Date {
     year: u16,
-    month: u16,
-    day: u16,
+    month: u8,
+    day: u8,
 }
 
 impl Display for Date {
@@ -83,7 +83,7 @@ impl Display for Date {
 }
 
 impl Date {
-    pub fn new(year: u16, month: u16, day: u16) -> Result<Date, AppError> {
+    pub fn new(year: u16, month: u8, day: u8) -> Result<Date, AppError> {
         if !is_valid_date(year, month, day) {
             Err(AppError::from_str("date", "not a valid date"))
         } else {
@@ -92,9 +92,9 @@ impl Date {
     }
 
     pub fn parse(text: &str) -> Result<Date, AppError> {
-        let m = parse_digits("month", &DATE_RE, text, 1)?;
-        let d = parse_digits("day", &DATE_RE, text, 2)?;
-        let y: u16 = parse_digits("year", &DATE_RE, text, 3)?;
+        let m = parse_digits_u8("month", &DATE_RE, text, 1)?;
+        let d = parse_digits_u8("day", &DATE_RE, text, 2)?;
+        let y: u16 = parse_digits_u16("year", &DATE_RE, text, 3)?;
         Self::new(y, m, d)
     }
 
@@ -102,8 +102,8 @@ impl Date {
         let d = chrono::Local::now();
         Date {
             year: d.year() as u16,
-            month: d.month() as u16,
-            day: d.day() as u16,
+            month: d.month() as u8,
+            day: d.day() as u8,
         }
     }
 
@@ -140,7 +140,7 @@ impl Date {
     }
 
     pub fn prev_monday(&self) -> Result<Date, AppError> {
-        let days_past = (self.day_num() % 7) as u16;
+        let days_past = (self.day_num() % 7) as u8;
         let days_offset = if days_past == 0 { 7 } else { days_past };
         if days_offset < self.day {
             Date::new(self.year, self.month, self.day - days_offset)
@@ -156,7 +156,7 @@ impl Date {
     }
 
     pub fn next_monday(&self) -> Result<Date, AppError> {
-        let days_past = (self.day_num() % 7) as u16;
+        let days_past = (self.day_num() % 7) as u8;
         let days_offset = 7 - days_past;
         let days_remaining = days_in_month(self.year, self.month) - self.day;
         if days_offset < days_remaining {
@@ -400,7 +400,7 @@ fn is_leap_year(year: u16) -> bool {
     (year % 4 == 0) && (year % 100 != 0 || year % 400 == 0)
 }
 
-fn days_in_month(year: u16, month: u16) -> u16 {
+fn days_in_month(year: u16, month: u8) -> u8 {
     if LONG_MONTHS.contains(&month) {
         31
     } else if SHORT_MONTHS.contains(&month) {
@@ -416,13 +416,13 @@ fn days_in_year(year: u16) -> u16 {
     if is_leap_year(year) { 366 } else { 365 }
 }
 
-fn day_number(year: u16, month: u16, day: u16) -> u32 {
+fn day_number(year: u16, month: u8, day: u8) -> u32 {
     let past_year_days = (MIN_YEAR..year).fold(0, |s: u32, y: u16| s + days_in_year(y) as u32);
     let past_month_days: u32 = (1..month).fold(0, |s, m| s + days_in_month(year, m) as u32);
     past_year_days + past_month_days + day as u32 - 1
 }
 
-fn is_valid_date(year: u16, month: u16, day: u16) -> bool {
+fn is_valid_date(year: u16, month: u8, day: u8) -> bool {
     (MIN_YEAR..=MAX_YEAR).contains(&year)
         && (1..=12).contains(&month)
         && day >= 1

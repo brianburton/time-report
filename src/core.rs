@@ -37,16 +37,40 @@ impl AppError {
     }
 }
 
-pub fn parse_digits(context: &str, re: &Regex, text: &str, group: usize) -> Result<u16, AppError> {
-    let digit_str = re
-        .captures(text)
+fn capture_digits<'a>(
+    context: &str,
+    re: &Regex,
+    text: &'a str,
+    group: usize,
+) -> Result<&'a str, AppError> {
+    re.captures(text)
         .and_then(|m| m.get(group))
         .map(|m| m.as_str())
-        .ok_or_else(|| {
-            AppError::from_str(context, format!("cannot find value in {text}").as_str())
-        })?;
+        .ok_or_else(|| AppError::from_str(context, format!("cannot find value in {text}").as_str()))
+}
+
+pub fn parse_digits_u16(
+    context: &str,
+    re: &Regex,
+    text: &str,
+    group: usize,
+) -> Result<u16, AppError> {
+    let digit_str = capture_digits(context, re, text, group)?;
     let number = digit_str
         .parse::<u16>()
+        .map_err(|e| AppError::from_error(context, e))?;
+    Ok(number)
+}
+
+pub fn parse_digits_u8(
+    context: &str,
+    re: &Regex,
+    text: &str,
+    group: usize,
+) -> Result<u8, AppError> {
+    let digit_str = capture_digits(context, re, text, group)?;
+    let number = digit_str
+        .parse::<u8>()
         .map_err(|e| AppError::from_error(context, e))?;
     Ok(number)
 }
