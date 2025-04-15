@@ -2,6 +2,7 @@ use derive_getters::Getters;
 use regex::Captures;
 use std::error::Error;
 use std::fmt::Display;
+use std::str::FromStr;
 
 #[derive(Debug, Getters, PartialEq)]
 pub struct AppError {
@@ -37,7 +38,7 @@ impl AppError {
     }
 }
 
-fn capture_digits<'a>(
+fn get_group_str<'a>(
     context: &str,
     text: &str,
     re_captures: &Option<Captures<'a>>,
@@ -50,33 +51,27 @@ fn capture_digits<'a>(
         .ok_or_else(|| AppError::from_str(context, format!("cannot find value in {text}").as_str()))
 }
 
-pub fn parse_digits_u16(
+pub fn parse_capture_group<T>(
     context: &str,
     text: &str,
     re_caps: &Option<Captures>,
     group: usize,
-) -> Result<u16, AppError> {
-    let digit_str = capture_digits(context, text, re_caps, group)?;
-    let number = digit_str.parse::<u16>().map_err(|e| {
+) -> Result<T, AppError>
+where
+    T: FromStr,
+    T::Err: Display,
+{
+    let digit_str = get_group_str(context, text, re_caps, group)?;
+    let number = digit_str.parse::<T>().map_err(|e| {
         AppError::from_str(
             context,
-            format!("error parsing '{}' in '{}': {}", digit_str, text, e).as_str(),
-        )
-    })?;
-    Ok(number)
-}
-
-pub fn parse_digits_u8(
-    context: &str,
-    text: &str,
-    re_caps: &Option<Captures>,
-    group: usize,
-) -> Result<u8, AppError> {
-    let digit_str = capture_digits(context, text, re_caps, group)?;
-    let number = digit_str.parse::<u8>().map_err(|e| {
-        AppError::from_str(
-            context,
-            format!("error parsing '{}' in '{}': {}", digit_str, text, e).as_str(),
+            format!(
+                "error parsing '{}' in '{}': {}",
+                digit_str,
+                text,
+                e.to_string()
+            )
+            .as_str(),
         )
     })?;
     Ok(number)
