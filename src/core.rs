@@ -1,8 +1,12 @@
 use derive_getters::Getters;
+use rand::Rng;
 use regex::Captures;
 use std::error::Error;
 use std::fmt::Display;
+use std::fs::{OpenOptions, exists};
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::str::FromStr;
+use std::{fs, iter};
 
 #[derive(Debug, Getters, PartialEq)]
 pub struct AppError {
@@ -38,6 +42,12 @@ impl AppError {
     }
 }
 
+impl From<std::io::Error> for AppError {
+    fn from(error: std::io::Error) -> Self {
+        AppError::from_error("IO Error", &error)
+    }
+}
+
 fn get_group_str<'a>(
     context: &str,
     text: &str,
@@ -65,14 +75,53 @@ where
     let number = digit_str.parse::<T>().map_err(|e| {
         AppError::from_str(
             context,
-            format!(
-                "error parsing '{}' in '{}': {}",
-                digit_str,
-                text,
-                e.to_string()
-            )
-            .as_str(),
+            format!("error parsing '{}' in '{}': {}", digit_str, text, e).as_str(),
         )
     })?;
     Ok(number)
+}
+
+fn random_chars() -> String {
+    const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let mut rng = rand::rng();
+    let one_char = || CHARSET[rng.random_range(0..CHARSET.len())] as char;
+    iter::repeat_with(one_char).take(7).collect()
+}
+
+fn split_path(path: &str) -> (&str, &str) {
+    match path.rfind('/') {
+        Some(i) => (&path[..=i], &path[i + 1..]),
+        None => ("", path),
+    }
+}
+
+fn get_temp_file_specs(path: &str) -> Result<(u32, &str, &str), AppError> {
+    let (dir, name) = split_path(path);
+    let orig = OpenOptions::new().read(true).open(path)?;
+    let mode = orig.metadata()?.permissions().mode();
+    Ok((mode, dir, name))
+}
+
+pub fn create_temp_file(path: &str) -> Result<String, AppError> {
+    let (mode, dir, name) = get_temp_file_specs(path)?;
+    for _index in 0..50 {
+        let temp_path = format!("{}_time_report_{}_{}", dir, random_chars(), name);
+        if exists(&temp_path)? {
+            continue;
+        }
+        let _file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .mode(mode)
+            .open(&temp_path)?;
+        return Ok(temp_path);
+    }
+    Err(AppError::from_str("output", "Failed to create temp file"))
+}
+
+pub fn delete_file(temp_file: &str) -> Result<(), AppError> {
+    if exists(temp_file)? {
+        fs::remove_file(temp_file)?;
+    }
+    Ok(())
 }

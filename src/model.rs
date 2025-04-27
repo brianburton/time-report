@@ -24,6 +24,15 @@ lazy_static! {
         "SAT".to_string(),
         "SUN".to_string(),
     );
+    static ref DAY_NAMES: Vector<String> = vector!(
+        "Monday".to_string(),
+        "Tuesday".to_string(),
+        "Wednesday".to_string(),
+        "Thursday".to_string(),
+        "Friday".to_string(),
+        "Saturday".to_string(),
+        "Sunday".to_string(),
+    );
 }
 
 pub const MIN_YEAR: u16 = 1973;
@@ -86,7 +95,10 @@ impl Display for Date {
 impl Date {
     pub fn new(year: u16, month: u8, day: u8) -> Result<Date, AppError> {
         if !is_valid_date(year, month, day) {
-            Err(AppError::from_str("date", "not a valid date"))
+            Err(AppError::from_str(
+                "date",
+                format!("not a valid date: {}/{}/{}", month, day, year).as_str(),
+            ))
         } else {
             Ok(Date { year, month, day })
         }
@@ -204,6 +216,10 @@ impl Date {
         DAY_ABBREVS[(self.day_num() % 7) as usize].clone()
     }
 
+    pub fn day_name(&self) -> String {
+        DAY_NAMES[(self.day_num() % 7) as usize].clone()
+    }
+
     pub fn day_num(&self) -> u32 {
         day_number(self.year, self.month, self.day)
     }
@@ -234,6 +250,16 @@ impl Date {
         } else {
             Date::new(self.year + 1, 1, 1)
         }
+    }
+
+    pub(crate) fn minus_days(&self, days: i32) -> Result<Date, AppError> {
+        let mut d = *self;
+        let mut r = days;
+        while r > 0 {
+            d = d.prev()?;
+            r -= 1;
+        }
+        Ok(d)
     }
 }
 
