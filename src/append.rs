@@ -34,35 +34,47 @@ pub fn append_to_file(
     date: Date,
     projects: Vector<&Project>,
 ) -> Result<(), AppError> {
+    let io_err =
+        |detail: &str, e: std::io::Error| AppError::from_error("append_to_file", detail, e);
     let temp_file = create_temp_file(filename)?;
     defer! { delete_file(&temp_file).unwrap_or(())}
 
     let input_path = Path::new(filename);
-    let input_file = File::open(input_path)?;
+    let input_file = File::open(input_path).map_err(|e| io_err("open", e))?;
     let reader = io::BufReader::new(input_file);
 
     let output_path = Path::new(&temp_file);
-    let output_file = File::create(output_path)?;
+    let output_file = File::create(output_path).map_err(|e| io_err("create", e))?;
     let mut writer = io::BufWriter::new(output_file);
 
     let mut appended = false;
     let mut prev_blank = true;
     for raw_line in reader.lines() {
-        let line = raw_line?;
+        let line = raw_line.map_err(|e| io_err("read", e))?;
         let trimmed = line.trim();
         if trimmed == "END" && !appended {
-            writer.write_all(create_date_str(prev_blank, date, &projects).as_bytes())?;
-            writer.write_all("\n".as_bytes())?;
+            writer
+                .write_all(create_date_str(prev_blank, date, &projects).as_bytes())
+                .map_err(|e| io_err("write", e))?;
+            writer
+                .write_all("\n".as_bytes())
+                .map_err(|e| io_err("write", e))?;
             appended = true;
         }
-        writer.write_all(line.as_bytes())?;
-        writer.write_all("\n".as_bytes())?;
+        writer
+            .write_all(line.as_bytes())
+            .map_err(|e| io_err("write", e))?;
+        writer
+            .write_all("\n".as_bytes())
+            .map_err(|e| io_err("write", e))?;
         prev_blank = trimmed.is_empty();
     }
     if !appended {
-        writer.write_all(create_date_str(prev_blank, date, &projects).as_bytes())?;
+        writer
+            .write_all(create_date_str(prev_blank, date, &projects).as_bytes())
+            .map_err(|e| io_err("write", e))?;
     }
-    fs::rename(&temp_file, filename)?;
+    fs::rename(&temp_file, filename).map_err(|e| io_err("rename", e))?;
     Ok(())
 }
 

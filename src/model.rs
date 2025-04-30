@@ -52,7 +52,7 @@ impl Display for Time {
 impl Time {
     pub fn new(hour: u16, minute: u16) -> Result<Time, AppError> {
         if !is_valid_time(hour, minute) {
-            Err(AppError::from_str("time", "not a valid time"))
+            Err(AppError::from_str("Time::new", "not a valid time"))
         } else {
             let minute = hour * 60 + minute;
             Ok(Time { minute })
@@ -61,8 +61,8 @@ impl Time {
 
     pub fn parse(text: &str) -> Result<Time, AppError> {
         let re_captures = TIME_RE.captures(text);
-        let h: u16 = parse_capture_group("hour", text, &re_captures, 1)?;
-        let m: u16 = parse_capture_group("minute", text, &re_captures, 2)?;
+        let h: u16 = parse_capture_group("Time::parse:hour", text, &re_captures, 1)?;
+        let m: u16 = parse_capture_group("Time::parse:minute", text, &re_captures, 2)?;
         Self::new(h, m)
     }
 
@@ -96,7 +96,7 @@ impl Date {
     pub fn new(year: u16, month: u8, day: u8) -> Result<Date, AppError> {
         if !is_valid_date(year, month, day) {
             Err(AppError::from_str(
-                "date",
+                "Date::new",
                 format!("not a valid date: {}/{}/{}", month, day, year).as_str(),
             ))
         } else {
@@ -106,9 +106,9 @@ impl Date {
 
     pub fn parse(text: &str) -> Result<Date, AppError> {
         let re_captures = DATE_RE.captures(text);
-        let m: u8 = parse_capture_group("month", text, &re_captures, 1)?;
-        let d: u8 = parse_capture_group("day", text, &re_captures, 2)?;
-        let y: u16 = parse_capture_group("year", text, &re_captures, 3)?;
+        let m: u8 = parse_capture_group("Date::parse:month", text, &re_captures, 1)?;
+        let d: u8 = parse_capture_group("Date::parse:day", text, &re_captures, 2)?;
+        let y: u16 = parse_capture_group("Date::parse:year", text, &re_captures, 3)?;
         Self::new(y, m, d)
     }
 
@@ -335,7 +335,10 @@ impl Display for TimeRange {
 impl TimeRange {
     pub fn new(from: Time, to: Time) -> Result<TimeRange, AppError> {
         if from >= to {
-            Err(AppError::from_str("model", "out of order time range"))
+            Err(AppError::from_str(
+                "TimeRange::new",
+                "out of order time range",
+            ))
         } else {
             Ok(TimeRange { from, to })
         }
@@ -392,7 +395,7 @@ impl ProjectTimes {
                 project,
                 ordset_to_string(&conflicts)
             );
-            return Err(AppError::from_str("projects", detail.as_str()));
+            return Err(AppError::from_str("ProjectTimes::new", detail.as_str()));
         }
         sorted.sort();
         Ok(ProjectTimes {

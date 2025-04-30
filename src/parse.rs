@@ -44,7 +44,7 @@ fn parse_time(hhmm: &str) -> Result<Time, AppError> {
 fn parse_time_range(text: &str) -> Result<TimeRange, AppError> {
     let caps = TIME_RANGE_RE
         .captures(text)
-        .ok_or_else(|| AppError::from_str("time range", "not a time range"))?;
+        .ok_or_else(|| AppError::from_str("parse_time_range", "not a time range"))?;
     let from = parse_time(caps[1].to_string().as_str())?;
     let to = parse_time(caps[2].to_string().as_str())?;
     TimeRange::new(from, to)
@@ -54,7 +54,7 @@ fn parse_time_range(text: &str) -> Result<TimeRange, AppError> {
 fn parse_time_ranges(time_range_str: &str) -> Result<(Vector<TimeRange>, bool), AppError> {
     if !TIME_RANGES_RE.is_match(time_range_str) {
         return Err(AppError::from_str(
-            "time ranges",
+            "parse_time_ranges",
             &format!("invalid time ranges: {}", time_range_str),
         ));
     };
@@ -82,7 +82,7 @@ fn is_time_line(line: &str) -> bool {
 fn parse_date_line(line: &str) -> Result<Date, AppError> {
     let caps = DATE_LINE_RE
         .captures(line)
-        .ok_or_else(|| AppError::from_str("date line", "not a date line"))?;
+        .ok_or_else(|| AppError::from_str("parse_date_line", "not a date line"))?;
     Date::parse(caps[1].to_string().as_str())
 }
 
@@ -90,7 +90,7 @@ fn parse_date_line(line: &str) -> Result<Date, AppError> {
 fn parse_time_line(line: &str) -> Result<(ProjectTimes, bool), AppError> {
     let caps = TIME_LINE_RE
         .captures(line)
-        .ok_or_else(|| AppError::from_str("time line", "not a time line"))?;
+        .ok_or_else(|| AppError::from_str("parse_time_line", "not a time line"))?;
     let client = caps[1].to_string();
     let project = caps[2].to_string();
     let (time_ranges, incomplete) = parse_time_ranges(&caps[3])?;
@@ -103,7 +103,7 @@ fn parse_time_line(line: &str) -> Result<(ProjectTimes, bool), AppError> {
 // Function to parse a file into day entries
 pub fn parse_file(file_path: &str) -> Result<(Vector<DayEntry>, Vector<String>), AppError> {
     let path = Path::new(file_path);
-    let file = File::open(path).map_err(|e| AppError::from_error("i/o", e))?;
+    let file = File::open(path).map_err(|e| AppError::from_error("parse_file", "open", e))?;
     let reader = io::BufReader::new(file);
 
     let mut days = Vector::new();
@@ -117,7 +117,7 @@ pub fn parse_file(file_path: &str) -> Result<(Vector<DayEntry>, Vector<String>),
         line_num += 1;
         let line = raw_line
             .map(|s| remove_comments(&s))
-            .map_err(|e| AppError::from_error("i/o", e))?;
+            .map_err(|e| AppError::from_error("parse_file", "read", e))?;
 
         if is_date_line(line.as_str()) {
             let new_date = parse_date_line(&line)?;
@@ -146,7 +146,7 @@ pub fn parse_file(file_path: &str) -> Result<(Vector<DayEntry>, Vector<String>),
                 projects.push_back(time_ranges);
             } else {
                 return Err(AppError::from_str(
-                    "file",
+                    "parse_file",
                     format!("time line before any dates:{line_num}: '{}'", line).as_str(),
                 ));
             }

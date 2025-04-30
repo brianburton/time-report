@@ -43,11 +43,11 @@ fn main() -> Result<(), AppError> {
     let mut args = env::args();
     let command = args
         .nth(1)
-        .ok_or_else(|| AppError::from_str("usage", "missing command"))?;
+        .ok_or_else(|| AppError::from_str("main", "usage: missing command"))?;
 
     let filename = args
         .next()
-        .ok_or_else(|| AppError::from_str("usage", "missing file name"))?;
+        .ok_or_else(|| AppError::from_str("main", "usage: missing file name"))?;
 
     println!("Loading {}...", filename);
     let (all_day_entries, warnings) = parse::parse_file(&filename)?;
@@ -57,6 +57,6 @@ fn main() -> Result<(), AppError> {
     match command.as_str() {
         "report" => command_report(&all_day_entries, args.next(), args.next()),
         "append" => command_append(&all_day_entries, &filename),
-        _ => Err(AppError::from_str("usage", "invalid command"))?,
+        _ => Err(AppError::from_str("main", "usage: invalid command"))?,
     }
 }

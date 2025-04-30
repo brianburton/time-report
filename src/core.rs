@@ -2,49 +2,66 @@ use derive_getters::Getters;
 use rand::Rng;
 use regex::Captures;
 use std::error::Error;
-use std::fmt::Display;
+use std::fmt::{Debug, Display, Formatter};
 use std::fs::{OpenOptions, exists};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::str::FromStr;
 use std::{fs, iter};
 
-#[derive(Debug, Getters, PartialEq)]
+#[derive(Getters)]
 pub struct AppError {
     context: String,
     detail: String,
+    source: Option<Box<dyn Error + 'static>>,
+}
+
+impl PartialEq<AppError> for AppError {
+    fn eq(&self, other: &AppError) -> bool {
+        self.to_string() == other.to_string()
+    }
+}
+
+impl Debug for AppError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(self, f)
+    }
 }
 
 impl Display for AppError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let cause = match self.source {
+            Some(ref e) => format!(" cause=[{}]", e),
+            None => String::new(),
+        };
         write!(
             f,
-            "error: context: {} detail: {}",
-            self.context, self.detail
+            "context='{}' detail='{}'{}",
+            self.context, self.detail, cause
         )
     }
 }
 
-impl Error for AppError {}
+impl Error for AppError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        self.source.as_ref().map(|e| e.as_ref() as &_)
+    }
+}
 
 impl AppError {
     pub fn from_str(context: &str, detail: &str) -> Self {
         Self {
             context: context.to_string(),
             detail: detail.to_string(),
+            source: None,
         }
     }
 
-    pub fn from_error<E: Error>(context: &str, e: E) -> Self {
+    pub fn from_error<E: Error + 'static>(context: &str, detail: &str, e: E) -> Self {
         Self {
             context: context.to_string(),
-            detail: e.to_string(),
+            detail: detail.to_string(),
+            source: Some(Box::new(e)),
         }
-    }
-}
-
-impl From<std::io::Error> for AppError {
-    fn from(error: std::io::Error) -> Self {
-        AppError::from_error("IO Error", &error)
     }
 }
 
@@ -96,32 +113,48 @@ fn split_path(path: &str) -> (&str, &str) {
 }
 
 fn get_temp_file_specs(path: &str) -> Result<(u32, &str, &str), AppError> {
+    let io_err =
+        |detail: &str, e: std::io::Error| AppError::from_error("get_temp_file_specs", detail, e);
     let (dir, name) = split_path(path);
-    let orig = OpenOptions::new().read(true).open(path)?;
-    let mode = orig.metadata()?.permissions().mode();
+    let orig = OpenOptions::new()
+        .read(true)
+        .open(path)
+        .map_err(|e| io_err("open", e))?;
+    let mode = orig
+        .metadata()
+        .map_err(|e| io_err("metadata", e))?
+        .permissions()
+        .mode();
     Ok((mode, dir, name))
 }
 
 pub fn create_temp_file(path: &str) -> Result<String, AppError> {
+    let io_err =
+        |detail: &str, e: std::io::Error| AppError::from_error("create_temp_file", detail, e);
     let (mode, dir, name) = get_temp_file_specs(path)?;
     for _index in 0..50 {
         let temp_path = format!("{}_time_report_{}_{}", dir, random_chars(), name);
-        if exists(&temp_path)? {
+        if exists(&temp_path).map_err(|e| io_err("exists", e))? {
             continue;
         }
         let _file = OpenOptions::new()
             .write(true)
             .create(true)
             .mode(mode)
-            .open(&temp_path)?;
+            .open(&temp_path)
+            .map_err(|e| io_err("open", e))?;
         return Ok(temp_path);
     }
-    Err(AppError::from_str("output", "Failed to create temp file"))
+    Err(AppError::from_str(
+        "create_temp_file",
+        "Unable to create temp file",
+    ))
 }
 
 pub fn delete_file(temp_file: &str) -> Result<(), AppError> {
-    if exists(temp_file)? {
-        fs::remove_file(temp_file)?;
+    let io_err = |detail: &str, e: std::io::Error| AppError::from_error("delete_file", detail, e);
+    if exists(temp_file).map_err(|e| io_err("exists", e))? {
+        fs::remove_file(temp_file).map_err(|e| io_err("remove_file", e))?;
     }
     Ok(())
 }

@@ -148,8 +148,8 @@ fn compute_report_data(
     let day_entries = day_entries_in_range(&dates, all_day_entries);
     if day_entries.is_empty() {
         return Err(AppError::from_str(
-            "report",
-            "no data availble for date range",
+            "compute_report_data",
+            "no data available for date range",
         ));
     }
 
@@ -379,7 +379,10 @@ fn render_report_data(report_data: &ReportData) -> Result<Vector<String>, AppErr
         let week_data = if let Some(w) = report_data.weeks.get(&d.week_num()) {
             w
         } else {
-            return Err(AppError::from_str("report", "unable to find week data!"));
+            return Err(AppError::from_str(
+                "render_report_data",
+                "unable to find week data!",
+            ));
         };
         for p in report_data.projects.iter() {
             i += 1;
