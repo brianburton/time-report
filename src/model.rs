@@ -38,7 +38,7 @@ lazy_static! {
 pub const MIN_YEAR: u16 = 1973;
 pub const MAX_YEAR: u16 = 2300;
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Copy, Clone)]
 pub struct Time {
     minute: u16,
 }
@@ -320,7 +320,7 @@ impl DateRange {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Getters)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Getters)]
 pub struct TimeRange {
     from: Time,
     to: Time,
@@ -374,6 +374,15 @@ pub struct Project {
     code: String,
 }
 
+impl Project {
+    pub fn new(client: &str, code: &str) -> Project {
+        Project {
+            client: client.to_string(),
+            code: code.to_string(),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Clone, Getters)]
 pub struct ProjectTimes {
     project: Project,
@@ -382,8 +391,7 @@ pub struct ProjectTimes {
 
 impl ProjectTimes {
     pub fn new(
-        client: &str,
-        project: &str,
+        project: Project,
         time_ranges: &Vector<TimeRange>,
     ) -> Result<ProjectTimes, AppError> {
         let mut sorted = time_ranges.clone();
@@ -391,18 +399,15 @@ impl ProjectTimes {
         if !conflicts.is_empty() {
             let detail = format!(
                 "conflicting time ranges: client: {} project: {} conflicts: {}",
-                client,
-                project,
+                project.client,
+                project.code,
                 ordset_to_string(&conflicts)
             );
             return Err(AppError::from_str("ProjectTimes::new", detail.as_str()));
         }
         sorted.sort();
         Ok(ProjectTimes {
-            project: Project {
-                client: client.to_string(),
-                code: project.to_string(),
-            },
+            project: project.clone(),
             time_ranges: sorted,
         })
     }

@@ -1,5 +1,5 @@
 use crate::core::AppError;
-use crate::model::{Date, DayEntry, ProjectTimes, Time, TimeRange};
+use crate::model::{Date, DayEntry, Project, ProjectTimes, Time, TimeRange};
 use im::Vector;
 use lazy_static::lazy_static;
 use regex::Regex;
@@ -95,7 +95,10 @@ fn parse_time_line(line: &str) -> Result<(ProjectTimes, bool), AppError> {
     let project = caps[2].to_string();
     let (time_ranges, incomplete) = parse_time_ranges(&caps[3])?;
     Ok((
-        ProjectTimes::new(client.as_str(), project.as_str(), &time_ranges)?,
+        ProjectTimes::new(
+            Project::new(client.as_str(), project.as_str()),
+            &time_ranges,
+        )?,
         incomplete,
     ))
 }

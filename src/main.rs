@@ -4,10 +4,12 @@ mod append;
 mod core;
 mod model;
 mod parse;
+mod random;
 mod report;
 
 use crate::append::append_to_file;
 use crate::model::DayEntry;
+use crate::random::{Random, random_day_entries};
 use core::AppError;
 use im::Vector;
 use model::{Date, DateRange};
@@ -28,6 +30,40 @@ fn command_report(
     let lines = report::create_report(dates, all_day_entries)?;
     for line in lines {
         println!("{}", line);
+    }
+    Ok(())
+}
+
+fn command_random(
+    all_day_entries: &Vector<DayEntry>,
+    first_date_str: Option<String>,
+    last_date_str: Option<String>,
+) -> Result<(), AppError> {
+    let first_date_str = first_date_str.unwrap_or_else(|| Date::today().to_string());
+    let dates = match last_date_str {
+        Some(s) => DateRange::new(Date::parse(&first_date_str)?, Date::parse(&s)?),
+        None => Date::parse(&first_date_str)?.semimonth_for_date(),
+    };
+    let mut date_count = 0;
+    let mut rnd = Random::new();
+    for de in random_day_entries(&mut rnd, dates) {
+        if date_count > 0 {
+            println!()
+        }
+        println!("Date: {} {}", de.date().day_name(), de.date());
+        for pt in de.projects() {
+            let mut time_count = 0;
+            print!("{},{}: ", pt.project().client(), pt.project().code());
+            for t in pt.time_ranges() {
+                if time_count > 0 {
+                    print!(",")
+                }
+                print!("{}-{}", t.from(), t.to());
+                time_count += 1;
+            }
+            println!()
+        }
+        date_count += 1;
     }
     Ok(())
 }
@@ -56,6 +92,7 @@ fn main() -> Result<(), AppError> {
 
     match command.as_str() {
         "report" => command_report(&all_day_entries, args.next(), args.next()),
+        "random" => command_random(&all_day_entries, args.next(), args.next()),
         "append" => command_append(&all_day_entries, &filename),
         _ => Err(AppError::from_str("main", "usage: invalid command"))?,
     }
