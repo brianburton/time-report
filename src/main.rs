@@ -26,26 +26,22 @@ fn command_append(args: &mut Args) -> Result<(), AppError> {
 
 fn command_random(args: &mut Args) -> Result<(), AppError> {
     let dates = load_dates(args)?;
-    let mut date_count = 0;
     let mut rnd = Random::new();
-    for de in random_day_entries(&mut rnd, dates) {
+    for (date_count, de) in random_day_entries(&mut rnd, dates).into_iter().enumerate() {
         if date_count > 0 {
             println!()
         }
         println!("Date: {} {}", de.date().day_name(), de.date());
         for pt in de.projects() {
-            let mut time_count = 0;
             print!("{},{}: ", pt.project().client(), pt.project().code());
-            for t in pt.time_ranges() {
+            for (time_count, t) in pt.time_ranges().into_iter().enumerate() {
                 if time_count > 0 {
                     print!(",")
                 }
                 print!("{}-{}", t.from(), t.to());
-                time_count += 1;
             }
             println!()
         }
-        date_count += 1;
     }
     Ok(())
 }

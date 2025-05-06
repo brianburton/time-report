@@ -359,11 +359,11 @@ fn find_overlapping_time_ranges(time_ranges: &Vector<TimeRange>) -> OrdSet<TimeR
     time_ranges.iter().for_each(|candidate| {
         visited.iter().for_each(|checked| {
             if !TimeRange::distinct(candidate, checked) {
-                conflicts.insert(checked.clone());
-                conflicts.insert(candidate.clone());
+                conflicts.insert(*checked);
+                conflicts.insert(*candidate);
             }
         });
-        visited.insert(candidate.clone());
+        visited.insert(*candidate);
     });
     conflicts
 }

@@ -1,4 +1,3 @@
-use crate::core;
 use crate::model::{Date, DateRange, DayEntry, Project, ProjectTimes, Time, TimeRange};
 use im::{HashMap, OrdSet, Vector, hashmap, vector};
 use lazy_static::lazy_static;
@@ -98,7 +97,7 @@ fn random_project_times(rnd: &mut Random, time_ranges: &Vector<TimeRange>) -> Ve
         if let Some(pt) = cache.get_mut(&project) {
             pt.push_back(*time_range);
         } else {
-            cache.insert(&project, vector!(*time_range));
+            cache.insert(project, vector!(*time_range));
         }
     }
     let mut answer = vector!();
