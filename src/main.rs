@@ -14,36 +14,18 @@ use core::AppError;
 use im::Vector;
 use model::{Date, DateRange};
 use std::env;
+use std::env::Args;
 
-fn command_report(
-    all_day_entries: &Vector<DayEntry>,
-    first_date_str: Option<String>,
-    last_date_str: Option<String>,
-) -> Result<(), AppError> {
-    let first_date_str = first_date_str.unwrap_or_else(|| Date::today().to_string());
-    let dates = match last_date_str {
-        Some(s) => DateRange::new(Date::parse(&first_date_str)?, Date::parse(&s)?),
-        None => Date::parse(&first_date_str)?.semimonth_for_date(),
-    };
-    println!("Reporting from {} to {}", dates.first(), dates.last());
-
-    let lines = report::create_report(dates, all_day_entries)?;
-    for line in lines {
-        println!("{}", line);
-    }
-    Ok(())
+fn command_append(args: &mut Args) -> Result<(), AppError> {
+    let (filename, all_day_entries) = load_file(args)?;
+    let date = Date::today();
+    let min_date = date.minus_days(30)?;
+    let recent_projects = append::recent_projects(&all_day_entries, min_date, 5);
+    append_to_file(filename.as_str(), date, recent_projects)
 }
 
-fn command_random(
-    all_day_entries: &Vector<DayEntry>,
-    first_date_str: Option<String>,
-    last_date_str: Option<String>,
-) -> Result<(), AppError> {
-    let first_date_str = first_date_str.unwrap_or_else(|| Date::today().to_string());
-    let dates = match last_date_str {
-        Some(s) => DateRange::new(Date::parse(&first_date_str)?, Date::parse(&s)?),
-        None => Date::parse(&first_date_str)?.semimonth_for_date(),
-    };
+fn command_random(args: &mut Args) -> Result<(), AppError> {
+    let dates = load_dates(args)?;
     let mut date_count = 0;
     let mut rnd = Random::new();
     for de in random_day_entries(&mut rnd, dates) {
@@ -68,11 +50,39 @@ fn command_random(
     Ok(())
 }
 
-fn command_append(all_day_entries: &Vector<DayEntry>, filename: &str) -> Result<(), AppError> {
-    let date = Date::today();
-    let min_date = date.minus_days(30)?;
-    let recent_projects = append::recent_projects(all_day_entries, min_date, 5);
-    append_to_file(filename, date, recent_projects)
+fn command_report(args: &mut Args) -> Result<(), AppError> {
+    let (_, all_day_entries) = load_file(args)?;
+    let dates = load_dates(args)?;
+    println!("Reporting from {} to {}", dates.first(), dates.last());
+
+    let lines = report::create_report(dates, &all_day_entries)?;
+    for line in lines {
+        println!("{}", line);
+    }
+    Ok(())
+}
+
+fn load_file(args: &mut Args) -> Result<(String, Vector<DayEntry>), AppError> {
+    let filename = args
+        .next()
+        .ok_or_else(|| AppError::from_str("load_file", "usage: missing file name"))?;
+
+    println!("Loading {}...", filename);
+    let (all_day_entries, warnings) = parse::parse_file(&filename)?;
+    warnings.iter().for_each(|w| eprintln!("warning: {w}"));
+    println!("Loaded {} dates from {}", all_day_entries.len(), filename);
+    Ok((filename, all_day_entries))
+}
+
+fn load_dates(args: &mut Args) -> Result<DateRange, AppError> {
+    let first_date_str = args.next();
+    let last_date_str = args.next();
+    let first_date_str = first_date_str.unwrap_or_else(|| Date::today().to_string());
+    let date_range = match last_date_str {
+        Some(s) => DateRange::new(Date::parse(&first_date_str)?, Date::parse(&s)?),
+        None => Date::parse(&first_date_str)?.semimonth_for_date(),
+    };
+    Ok(date_range)
 }
 
 fn main() -> Result<(), AppError> {
@@ -81,19 +91,13 @@ fn main() -> Result<(), AppError> {
         .nth(1)
         .ok_or_else(|| AppError::from_str("main", "usage: missing command"))?;
 
-    let filename = args
-        .next()
-        .ok_or_else(|| AppError::from_str("main", "usage: missing file name"))?;
-
-    println!("Loading {}...", filename);
-    let (all_day_entries, warnings) = parse::parse_file(&filename)?;
-    warnings.iter().for_each(|w| eprintln!("warning: {w}"));
-    println!("Loaded {} dates from {}", all_day_entries.len(), filename);
-
     match command.as_str() {
-        "report" => command_report(&all_day_entries, args.next(), args.next()),
-        "random" => command_random(&all_day_entries, args.next(), args.next()),
-        "append" => command_append(&all_day_entries, &filename),
-        _ => Err(AppError::from_str("main", "usage: invalid command"))?,
+        "append" => command_append(&mut args),
+        "random" => command_random(&mut args),
+        "report" => command_report(&mut args),
+        _ => Err(AppError::from_str(
+            "main",
+            format!("usage: invalid command {}", command.as_str()).as_str(),
+        ))?,
     }
 }
