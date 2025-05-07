@@ -40,13 +40,6 @@ impl Random {
         }
     }
 
-    pub fn for_testing() -> Random {
-        type SeedType = <StdRng as SeedableRng>::Seed;
-        let seed: SeedType = [42u8; 32];
-        let rng = StdRng::from_seed(seed);
-        Random { rng: Box::new(rng) }
-    }
-
     pub fn next_index(&mut self, limit: usize) -> usize {
         self.rng.random_range(0..limit)
     }
@@ -180,6 +173,23 @@ fn combine_adjacent_times(times: &mut OrdSet<Time>) -> Vector<TimeRange> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn random_for_testing() -> Random {
+        type SeedType = <StdRng as SeedableRng>::Seed;
+        let seed: SeedType = [42u8; 32];
+        let rng = StdRng::from_seed(seed);
+        Random { rng: Box::new(rng) }
+    }
+
+    #[test]
+    fn test_next_index() {
+        let mut random = random_for_testing();
+        for _ in 0..100 {
+            let index = random.next_index(6);
+            assert!(index < 6);
+        }
+    }
+
     #[test]
     fn test_add_uniquely() {
         let mut y: Vector<&i32> = add_uniquely(&Vector::new(), &1);
