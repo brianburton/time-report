@@ -67,43 +67,41 @@ impl Random {
 
 fn update_random_projects<'a>(
     rnd: &mut Random,
-    projects: &Vector<&'a Project>,
+    projects: &mut Vector<&'a Project>,
     target_len: usize,
-) -> Vector<&'a Project> {
-    let mut answer = projects.clone();
-    while answer.len() <= target_len {
+) {
+    while projects.len() <= target_len {
         let add_me = rnd.pick_one(&PROJECTS);
-        answer = add_uniquely(&answer, add_me)
+        add_uniquely(projects, add_me)
     }
-    let remove_me = rnd.next_index(answer.len());
-    answer.remove(remove_me);
-    answer
+    let remove_me = rnd.next_index(projects.len());
+    projects.remove(remove_me);
+    assert_eq!(target_len, projects.len());
 }
 
-fn add_uniquely<'a, T: Clone + PartialEq>(items: &Vector<&'a T>, item: &'a T) -> Vector<&'a T> {
-    let mut answer = items.clone();
+fn add_uniquely<'a, T: Clone + PartialEq>(items: &mut Vector<&'a T>, item: &'a T) {
     for x in items.iter() {
         if *x == item {
-            return answer;
+            return;
         }
     }
-    answer.push_back(item);
-    answer
+    items.push_back(item);
 }
 
 pub fn random_day_entries(rnd: &mut Random, dates: DateRange) -> Vector<DayEntry> {
     let project_count = 4;
-    let mut answer: Vector<DayEntry> = vector!();
-    let mut projects: Vector<&Project> = update_random_projects(rnd, &Vector::new(), project_count);
-    assert_eq!(project_count, projects.len());
+
+    let mut projects: Vector<&Project> = Vector::new();
+    update_random_projects(rnd, &mut projects, project_count);
+
+    let mut day_entries: Vector<DayEntry> = Vector::new();
     for d in dates.iter() {
         if d.is_monday() {
-            projects = update_random_projects(rnd, &projects, project_count);
-            assert_eq!(project_count, projects.len());
+            update_random_projects(rnd, &mut projects, project_count);
         }
-        answer.push_back(random_day_entry(rnd, d, &projects));
+        day_entries.push_back(random_day_entry(rnd, d, &projects));
     }
-    answer
+    day_entries
 }
 
 fn random_day_entry(rnd: &mut Random, day: Date, projects: &Vector<&Project>) -> DayEntry {
@@ -192,22 +190,23 @@ mod tests {
 
     #[test]
     fn test_add_uniquely() {
-        let mut y: Vector<&i32> = add_uniquely(&Vector::new(), &1);
+        let mut y: Vector<&i32> = Vector::new();
+        add_uniquely(&mut y, &1);
         assert_eq!(vector!(&1), y);
 
-        y = add_uniquely(&y, &1);
+        add_uniquely(&mut y, &1);
         assert_eq!(vector!(&1), y);
 
-        y = add_uniquely(&y, &2);
+        add_uniquely(&mut y, &2);
         assert_eq!(vector!(&1, &2), y);
 
-        y = add_uniquely(&y, &1);
+        add_uniquely(&mut y, &1);
         assert_eq!(vector!(&1, &2), y);
 
-        y = add_uniquely(&y, &2);
+        add_uniquely(&mut y, &2);
         assert_eq!(vector!(&1, &2), y);
 
-        y = add_uniquely(&y, &3);
+        add_uniquely(&mut y, &3);
         assert_eq!(vector!(&1, &2, &3), y);
     }
 }
