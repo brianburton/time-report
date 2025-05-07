@@ -80,12 +80,9 @@ fn update_random_projects<'a>(
 }
 
 fn add_uniquely<'a, T: Clone + PartialEq>(items: &mut Vector<&'a T>, item: &'a T) {
-    for x in items.iter() {
-        if *x == item {
-            return;
-        }
+    if !items.contains(&item) {
+        items.push_back(item);
     }
-    items.push_back(item);
 }
 
 pub fn random_day_entries(rnd: &mut Random, dates: DateRange) -> Vector<DayEntry> {
