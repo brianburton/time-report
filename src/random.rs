@@ -1,5 +1,5 @@
 use crate::model::{Date, DateRange, DayEntry, Project, ProjectTimes, Time, TimeRange};
-use im::{HashMap, OrdSet, Vector, hashmap, vector};
+use im::{HashMap, OrdSet, Vector, hashmap, ordset, vector};
 use lazy_static::lazy_static;
 use rand::prelude::*;
 
@@ -72,27 +72,63 @@ impl Random {
     }
 }
 
+fn update_random_projects<'a>(
+    rnd: &mut Random,
+    projects: &Vector<&'a Project>,
+    target_len: usize,
+) -> Vector<&'a Project> {
+    let mut answer = projects.clone();
+    while answer.len() <= target_len {
+        let add_me = rnd.pick_one(&PROJECTS);
+        answer = add_uniquely(&answer, add_me)
+    }
+    let remove_me = rnd.next_index(answer.len());
+    answer.remove(remove_me);
+    answer
+}
+
+fn add_uniquely<'a, T: Clone + PartialEq>(items: &Vector<&'a T>, item: &'a T) -> Vector<&'a T> {
+    let mut answer = items.clone();
+    for x in items.iter() {
+        if *x == item {
+            return answer;
+        }
+    }
+    answer.push_back(item);
+    answer
+}
+
 pub fn random_day_entries(rnd: &mut Random, dates: DateRange) -> Vector<DayEntry> {
+    let project_count = 4;
     let mut answer: Vector<DayEntry> = vector!();
+    let mut projects: Vector<&Project> = update_random_projects(rnd, &Vector::new(), project_count);
+    assert_eq!(project_count, projects.len());
     for d in dates.iter() {
-        answer.push_back(random_day_entry(rnd, d));
+        if d.is_monday() {
+            projects = update_random_projects(rnd, &projects, project_count);
+            assert_eq!(project_count, projects.len());
+        }
+        answer.push_back(random_day_entry(rnd, d, &projects));
     }
     answer
 }
 
-fn random_day_entry(rnd: &mut Random, day: Date) -> DayEntry {
+fn random_day_entry(rnd: &mut Random, day: Date, projects: &Vector<&Project>) -> DayEntry {
     let time_ranges = random_time_ranges(rnd);
-    let project_times = random_project_times(rnd, &time_ranges);
+    let project_times = random_project_times(rnd, projects, &time_ranges);
     DayEntry::new(day, &project_times)
 }
 
-fn random_project_times(rnd: &mut Random, time_ranges: &Vector<TimeRange>) -> Vector<ProjectTimes> {
+fn random_project_times(
+    rnd: &mut Random,
+    projects: &Vector<&Project>,
+    time_ranges: &Vector<TimeRange>,
+) -> Vector<ProjectTimes> {
     let mut cache: HashMap<&Project, Vector<TimeRange>> = hashmap!();
+    let mut project = *rnd.pick_one(projects);
     for time_range in time_ranges.iter() {
-        let project = if cache.keys().len() == 0 || rnd.inbound(1, 4) {
-            rnd.pick_one(&PROJECTS)
-        } else {
-            *rnd.pick_one(&cache.keys().collect())
+        if rnd.inbound(1, 4) {
+            project = *rnd.pick_one(projects)
         };
         if let Some(pt) = cache.get_mut(&project) {
             pt.push_back(*time_range);
@@ -114,11 +150,7 @@ fn random_time_ranges(rnd: &mut Random) -> Vector<TimeRange> {
 
 fn random_times(rnd: &mut Random) -> OrdSet<Time> {
     let num_times = 2 + rnd.next_index(5);
-    let mut times: OrdSet<Time> = OrdSet::new();
-    times.insert(*EIGHT_AM);
-    times.insert(*NOON);
-    times.insert(*ONE_PM);
-    times.insert(*FIVE_PM);
+    let mut times: OrdSet<Time> = ordset!(*EIGHT_AM, *NOON, *ONE_PM, *FIVE_PM);
     for _ in 0..num_times {
         times.insert(rnd.next_time());
     }
@@ -143,4 +175,29 @@ fn combine_adjacent_times(times: &mut OrdSet<Time>) -> Vector<TimeRange> {
         }
     }
     ranges
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_add_uniquely() {
+        let mut y: Vector<&i32> = add_uniquely(&Vector::new(), &1);
+        assert_eq!(vector!(&1), y);
+
+        y = add_uniquely(&y, &1);
+        assert_eq!(vector!(&1), y);
+
+        y = add_uniquely(&y, &2);
+        assert_eq!(vector!(&1, &2), y);
+
+        y = add_uniquely(&y, &1);
+        assert_eq!(vector!(&1, &2), y);
+
+        y = add_uniquely(&y, &2);
+        assert_eq!(vector!(&1, &2), y);
+
+        y = add_uniquely(&y, &3);
+        assert_eq!(vector!(&1, &2, &3), y);
+    }
 }
