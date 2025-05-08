@@ -363,7 +363,7 @@ fn render_report_data(report_data: &ReportData) -> Result<Vector<String>, AppErr
     let mut answer = Vector::new();
 
     let left_labels = create_project_labels(&report_data.projects);
-    let full_range = report_data.dates.to_full_weeks()?;
+    let full_range = report_data.dates.as_full_weeks()?;
     for d in full_range.iter() {
         if !d.is_monday() {
             continue;

@@ -291,7 +291,7 @@ impl Iterator for DateIter {
     }
 }
 
-#[derive(Debug, Getters)]
+#[derive(Debug, Getters, Clone, Copy)]
 pub struct DateRange {
     first: Date,
     last: Date,
@@ -313,7 +313,7 @@ impl DateRange {
         self.first <= *d && *d <= self.last
     }
 
-    pub fn to_full_weeks(&self) -> Result<DateRange, AppError> {
+    pub fn as_full_weeks(&self) -> Result<DateRange, AppError> {
         let first = self.first.this_monday()?;
         let last = self.last.this_sunday()?;
         Ok(DateRange { first, last })

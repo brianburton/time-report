@@ -6,6 +6,7 @@ mod model;
 mod parse;
 mod random;
 mod report;
+mod watch;
 
 use core::AppError;
 use im::Vector;
@@ -58,16 +59,29 @@ fn command_report(args: &mut Args) -> Result<(), AppError> {
     Ok(())
 }
 
+fn command_watch(args: &mut Args) -> Result<(), AppError> {
+    let filename = get_filename(args)?;
+    let dates = load_dates(args)?;
+
+    watch::watch_and_report(filename.as_str(), dates)?;
+    Ok(())
+}
+
 fn load_file(args: &mut Args) -> Result<(String, Vector<DayEntry>), AppError> {
-    let filename = args
-        .next()
-        .ok_or_else(|| AppError::from_str("load_file", "usage: missing file name"))?;
+    let filename = get_filename(args)?;
 
     println!("Loading {}...", filename);
     let (all_day_entries, warnings) = parse::parse_file(&filename)?;
     warnings.iter().for_each(|w| eprintln!("warning: {w}"));
     println!("Loaded {} dates from {}", all_day_entries.len(), filename);
     Ok((filename, all_day_entries))
+}
+
+fn get_filename(args: &mut Args) -> Result<String, AppError> {
+    let filename = args
+        .next()
+        .ok_or_else(|| AppError::from_str("load_file", "usage: missing file name"))?;
+    Ok(filename)
 }
 
 fn load_dates(args: &mut Args) -> Result<DateRange, AppError> {
@@ -91,6 +105,7 @@ fn main() -> Result<(), AppError> {
         "append" => command_append(&mut args),
         "random" => command_random(&mut args),
         "report" => command_report(&mut args),
+        "watch" => command_watch(&mut args),
         _ => Err(AppError::from_str(
             "main",
             format!("usage: invalid command {}", command.as_str()).as_str(),
