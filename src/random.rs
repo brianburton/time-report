@@ -65,11 +65,7 @@ impl Random {
     }
 }
 
-fn update_random_projects<'a>(
-    rnd: &mut Random,
-    projects: &mut Vector<&'a Project>,
-    target_len: usize,
-) {
+fn update_random_projects(rnd: &mut Random, projects: &mut Vector<&Project>, target_len: usize) {
     while projects.len() <= target_len {
         let add_me = rnd.pick_one(&PROJECTS);
         add_uniquely(projects, add_me)

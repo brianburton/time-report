@@ -2,6 +2,7 @@ use crate::core::{AppError, create_temp_file, delete_file};
 use crate::model::{Date, DayEntry, Project};
 use im::{HashMap, Vector};
 use scopeguard::defer;
+use std::cmp::Ordering;
 use std::fs::File;
 use std::io::{BufRead, Write};
 use std::path::Path;
@@ -15,6 +16,27 @@ pub fn recent_projects(
     let all_projects_map = recent_projects_with_date(all_day_entries, min_date);
     let recent_projects = projects_sorted_by_date(all_projects_map, max_to_return);
     recent_projects
+}
+
+pub fn validate_date(all_day_entries: &Vector<DayEntry>, date: Date) -> Result<(), AppError> {
+    for day in all_day_entries {
+        match day.date().cmp(&date) {
+            Ordering::Less => {}
+            Ordering::Equal => {
+                return Err(AppError::from_str(
+                    "append_to_file",
+                    format!("date already in file: date='{}'", date).as_str(),
+                ));
+            }
+            Ordering::Greater => {
+                return Err(AppError::from_str(
+                    "append_to_file",
+                    format!("newer date in file: date='{}' newer='{}'", date, day.date()).as_str(),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn create_date_str(prev_blank: bool, date: Date, projects: &Vector<&Project>) -> String {

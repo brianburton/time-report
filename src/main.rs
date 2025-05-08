@@ -7,27 +7,27 @@ mod parse;
 mod random;
 mod report;
 
-use crate::append::append_to_file;
-use crate::model::DayEntry;
-use crate::random::{Random, random_day_entries};
 use core::AppError;
 use im::Vector;
-use model::{Date, DateRange};
+use model::{Date, DateRange, DayEntry};
 use std::env;
 use std::env::Args;
 
 fn command_append(args: &mut Args) -> Result<(), AppError> {
     let (filename, all_day_entries) = load_file(args)?;
     let date = Date::today();
+    append::validate_date(&all_day_entries, date)?;
+
     let min_date = date.minus_days(30)?;
     let recent_projects = append::recent_projects(&all_day_entries, min_date, 5);
-    append_to_file(filename.as_str(), date, recent_projects)
+    append::append_to_file(filename.as_str(), date, recent_projects)
 }
 
 fn command_random(args: &mut Args) -> Result<(), AppError> {
     let dates = load_dates(args)?;
-    let mut rnd = Random::new();
-    for (date_count, de) in random_day_entries(&mut rnd, dates).into_iter().enumerate() {
+    let mut rnd = random::Random::new();
+    let day_entries = random::random_day_entries(&mut rnd, dates);
+    for (date_count, de) in day_entries.into_iter().enumerate() {
         if date_count > 0 {
             println!()
         }
