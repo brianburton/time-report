@@ -18,6 +18,8 @@ lazy_static! {
         r"(^\d{4}-\d{4}(,\d{4}-\d{4})*(,\d{4}-)?$)|(^\d{4}-\d{4}(,\d{4}-\d{4})*$)|(^\d{4}-$)"
     )
     .unwrap();
+    static ref EMPTY_TIME_LINE_RE: Regex =
+        Regex::new(r"^([a-z]+),([-/ A-Za-z0-9]+) *: *$").unwrap();
     static ref TIME_LINE_RE: Regex = Regex::new(r"^([a-z]+),([-/ A-Za-z0-9]+) *: *(.*)$").unwrap();
     static ref DATE_LINE_RE: Regex = Regex::new(r"^Date: [A-Za-z]+ (\d{2}/\d{2}/\d{4})$").unwrap();
 }
@@ -78,6 +80,10 @@ fn is_time_line(line: &str) -> bool {
     TIME_LINE_RE.find(line).is_some()
 }
 
+fn is_empty_time_line(line: &str) -> bool {
+    EMPTY_TIME_LINE_RE.find(line).is_some()
+}
+
 // Function to parse a date line (e.g., "Date: Thursday 04/03/2025")
 fn parse_date_line(line: &str) -> Result<Date, AppError> {
     let caps = DATE_LINE_RE
@@ -136,6 +142,11 @@ pub fn parse_file(file_path: &str) -> Result<(Vector<DayEntry>, Vector<String>),
             }
             date = new_date;
             projects.clear();
+        } else if is_empty_time_line(line.as_str()) {
+            warnings.push_back(format!(
+                "incomplete time line:{line_num}: line: '{}'",
+                line.as_str()
+            ));
         } else if is_time_line(line.as_str()) {
             if have_date {
                 let (time_ranges, incomplete) = parse_time_line(&line)?;
