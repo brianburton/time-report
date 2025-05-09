@@ -1,13 +1,14 @@
 use crate::core::AppError;
-use crate::model::{DateRange, DayEntry};
-use crate::parse;
+use crate::model::{Date, DateRange, DayEntry};
 use crate::report;
 use crate::watch::PollOutcome::{Changed, DoNothing, LoadFailed, Reloaded};
+use crate::{append, load_file, parse};
 use crossterm::event::KeyCode;
 use crossterm::event::{Event, poll, read};
 use crossterm::{QueueableCommand, cursor, terminal};
 use im::Vector;
 use scopeguard::defer;
+use std::env::Args;
 use std::fs;
 use std::io::{Write, stdout};
 use std::thread;
@@ -58,6 +59,14 @@ impl<'a> Tracker<'a> {
                             Err(e) => Ok(LoadFailed(e)),
                         }
                     }
+                    KeyCode::Char('a') => {
+                        let loaded = self.append().and_then(|()| self.load(true));
+                        match loaded {
+                            Ok(Some(loaded)) => Ok(Reloaded(loaded)),
+                            Ok(None) => Ok(DoNothing),
+                            Err(e) => Ok(LoadFailed(e)),
+                        }
+                    }
                     _ => Ok(DoNothing),
                 },
                 Event::Resize(_, _) => {
@@ -92,6 +101,16 @@ impl<'a> Tracker<'a> {
             warnings,
         }))
     }
+
+    fn append(&mut self) -> Result<(), AppError> {
+        let (day_entries, _) = parse::parse_file(self.filename)?;
+        let date = Date::today();
+        append::validate_date(&day_entries, date)?;
+
+        let min_date = date.minus_days(30)?;
+        let recent_projects = append::recent_projects(&day_entries, min_date, 5);
+        append::append_to_file(self.filename, date, recent_projects)
+    }
 }
 
 pub fn watch_and_report(filename: &str, dates: DateRange) -> Result<(), AppError> {
@@ -124,7 +143,10 @@ pub fn watch_and_report(filename: &str, dates: DateRange) -> Result<(), AppError
 
 fn print_error(filename: &str, error: AppError) -> Result<(), AppError> {
     clear_screen()?;
-    println!("error reading file: filename={} error={}", filename, error);
+    println!(
+        "error reading file: filename={} error={}\r",
+        filename, error
+    );
     Ok(())
 }
 
