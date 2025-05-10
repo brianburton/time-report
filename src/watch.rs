@@ -159,7 +159,7 @@ impl<'a> Tracker<'a> {
 fn init_term() -> Result<(), AppError> {
     let io_err = |detail: &str, e: std::io::Error| AppError::from_error("init_term", detail, e);
     terminal::enable_raw_mode().map_err(|e| io_err("enable_raw_mode", e))?;
-    execute!(stdout(), Hide).map_err(|e| io_err("hide cursor", e));
+    execute!(stdout(), Hide).map_err(|e| io_err("hide cursor", e))?;
     Ok(())
 }
 
