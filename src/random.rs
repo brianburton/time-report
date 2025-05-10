@@ -92,6 +92,9 @@ pub fn random_day_entries(rnd: &mut Random, dates: DateRange) -> Vector<DayEntry
         if d.is_monday() {
             update_random_projects(rnd, &mut projects, project_count);
         }
+        if d.is_weekend() && rnd.inbound(7, 10) {
+            continue;
+        }
         day_entries.push_back(random_day_entry(rnd, d, &projects));
     }
     day_entries
