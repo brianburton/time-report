@@ -3,9 +3,10 @@ use crate::model::{Date, DateRange, DayEntry};
 use crate::report;
 use crate::watch::PollOutcome::{Changed, DoNothing, LoadFailed, Reloaded};
 use crate::{append, parse};
+use crossterm::cursor::{Hide, Show};
 use crossterm::event::KeyCode;
 use crossterm::event::{Event, poll, read};
-use crossterm::{QueueableCommand, cursor, terminal};
+use crossterm::{QueueableCommand, cursor, execute, terminal};
 use im::Vector;
 use regex::Regex;
 use scopeguard::defer;
@@ -53,7 +54,7 @@ impl<'a> Tracker<'a> {
             match read().map_err(|e| io_err("read", e))? {
                 Event::Key(event) => match event.code {
                     KeyCode::Char('q') => Ok(PollOutcome::Quit),
-                    KeyCode::Char('r') => {
+                    KeyCode::Char('r') | KeyCode::Enter => {
                         let loaded = self.load(true);
                         match loaded {
                             Ok(Some(loaded)) => Ok(Reloaded(loaded)),
@@ -131,6 +132,11 @@ impl<'a> Tracker<'a> {
             .map(|e| e.line_number())
             .unwrap_or(&0);
 
+        restore_term();
+        defer! {
+            _=init_term();
+        }
+
         let editor = get_editor();
         let mut command = Command::new(editor.clone());
         if supports_line_num_arg(editor.as_str()) {
@@ -150,12 +156,22 @@ impl<'a> Tracker<'a> {
     }
 }
 
-pub fn watch_and_report(filename: &str, dates: DateRange) -> Result<(), AppError> {
-    let io_err =
-        |detail: &str, e: std::io::Error| AppError::from_error("watch_and_report", detail, e);
+fn init_term() -> Result<(), AppError> {
+    let io_err = |detail: &str, e: std::io::Error| AppError::from_error("init_term", detail, e);
     terminal::enable_raw_mode().map_err(|e| io_err("enable_raw_mode", e))?;
+    execute!(stdout(), Hide).map_err(|e| io_err("hide cursor", e));
+    Ok(())
+}
+
+fn restore_term() {
+    _ = execute!(stdout(), Show);
+    _ = terminal::disable_raw_mode();
+}
+
+pub fn watch_and_report(filename: &str, dates: DateRange) -> Result<(), AppError> {
+    init_term()?;
     defer! {
-        _=terminal::disable_raw_mode();
+        restore_term();
     }
     let mut tracker = Tracker::new(filename);
     loop {
@@ -184,6 +200,7 @@ fn print_error(filename: &str, error: AppError) -> Result<(), AppError> {
         "error reading file: filename={} error={}\r",
         filename, error
     );
+    println!("\r\nPress r or ENTER to continue...\r");
     Ok(())
 }
 
