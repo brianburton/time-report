@@ -76,65 +76,52 @@ impl<'a> Tracker<'a> {
                     KeyCode::Char('r') | KeyCode::Enter => {
                         let loaded = self.load(true);
                         match loaded {
-                            Ok(Some(loaded)) => Ok(Reloaded(loaded)),
-                            Ok(None) => Ok(DoNothing),
+                            Ok((_, loaded)) => Ok(Reloaded(loaded)),
                             Err(e) => Ok(LoadFailed(e)),
                         }
                     }
-                    KeyCode::Char('e') => {
-                        let loaded = self.edit();
-                        match loaded {
-                            Ok(Some(loaded)) => Ok(Reloaded(loaded)),
-                            Ok(None) => Ok(DoNothing),
-                            Err(e) => Ok(LoadFailed(e)),
-                        }
-                    }
-                    KeyCode::Char('a') => {
-                        let loaded = self.append().and_then(|()| self.load(true));
-                        match loaded {
-                            Ok(Some(loaded)) => Ok(Reloaded(loaded)),
-                            Ok(None) => Ok(DoNothing),
-                            Err(e) => Ok(LoadFailed(e)),
-                        }
-                    }
+                    KeyCode::Char('e') => match self.edit() {
+                        Ok((true, loaded)) => Ok(Changed(loaded)),
+                        Ok((false, _)) => Ok(DoNothing),
+                        Err(e) => Ok(LoadFailed(e)),
+                    },
+                    KeyCode::Char('a') => match self.append() {
+                        Ok((_, loaded)) => Ok(Changed(loaded)),
+                        Err(e) => Ok(LoadFailed(e)),
+                    },
                     _ => Ok(DoNothing),
                 },
-                Event::Resize(_, _) => {
-                    let loaded = self.load(false);
-                    match loaded {
-                        Ok(Some(loaded)) => Ok(Reloaded(loaded)),
-                        Ok(None) => Ok(DoNothing),
-                        Err(e) => Ok(LoadFailed(e)),
-                    }
-                }
+                Event::Resize(_, _) => match self.load(false) {
+                    Ok((_, loaded)) => Ok(Reloaded(loaded)),
+                    Err(e) => Ok(LoadFailed(e)),
+                },
                 _ => Ok(DoNothing),
             }
         } else {
-            let loaded = self.load(false);
-            match loaded {
-                Ok(Some(loaded)) => Ok(Changed(loaded)),
-                Ok(None) => Ok(DoNothing),
+            match self.load(false) {
+                Ok((true, loaded)) => Ok(Changed(loaded)),
+                Ok((false, _)) => Ok(DoNothing),
                 Err(e) => Ok(LoadFailed(e)),
             }
         }
     }
 
-    fn load(&mut self, skip_delay: bool) -> Result<Option<LoadedFile>, AppError> {
+    fn load(&mut self, skip_delay: bool) -> Result<(bool, LoadedFile), AppError> {
         let current_file_millis = get_last_modified(self.filename)?;
         if current_file_millis == self.last_update_millis {
-            return Ok(None);
+            return Ok((false, self.loaded.clone()));
         }
         let next_update_millis = self.last_update_millis + self.update_delay_millis;
         if current_file_millis < next_update_millis && !skip_delay {
-            return Ok(None);
+            return Ok((false, self.loaded.clone()));
         }
         self.last_update_millis = current_file_millis;
         let (day_entries, warnings) = parse::parse_file(self.filename)?;
         self.loaded = LoadedFile::new(&day_entries, &warnings);
-        Ok(Some(self.loaded.clone()))
+        Ok((true, self.loaded.clone()))
     }
 
-    fn append(&mut self) -> Result<(), AppError> {
+    fn append(&mut self) -> Result<(bool, LoadedFile), AppError> {
         self.load(true)?;
         let date = Date::today();
         let day_entries = self.loaded.day_entries();
@@ -142,10 +129,11 @@ impl<'a> Tracker<'a> {
 
         let min_date = date.minus_days(30)?;
         let recent_projects = append::recent_projects(day_entries, min_date, 5);
-        append::append_to_file(self.filename, date, recent_projects)
+        append::append_to_file(self.filename, date, recent_projects)?;
+        self.load(true)
     }
 
-    fn edit(&mut self) -> Result<Option<LoadedFile>, AppError> {
+    fn edit(&mut self) -> Result<(bool, LoadedFile), AppError> {
         let io_err = |detail: &str, e: std::io::Error| AppError::from_error("edit", detail, e);
         let line_number = self
             .loaded
