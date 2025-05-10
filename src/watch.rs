@@ -7,6 +7,7 @@ use crossterm::cursor::{Hide, Show};
 use crossterm::event::KeyCode;
 use crossterm::event::{Event, poll, read};
 use crossterm::{QueueableCommand, cursor, execute, terminal};
+use derive_getters::Getters;
 use im::Vector;
 use regex::Regex;
 use scopeguard::defer;
@@ -19,11 +20,13 @@ use std::time::{Duration, SystemTime, SystemTimeError};
 
 struct Tracker<'a> {
     filename: &'a str,
-    next_update_millis: u128,
+    last_update_millis: u128,
+    loaded: LoadedFile,
     poll_wait_duration: Duration,
     update_delay_millis: u128,
 }
 
+#[derive(Clone, Getters)]
 struct LoadedFile {
     day_entries: Vector<DayEntry>,
     warnings: Vector<String>,
@@ -37,11 +40,27 @@ enum PollOutcome {
     LoadFailed(AppError),
 }
 
+impl LoadedFile {
+    fn new(day_entries: &Vector<DayEntry>, warnings: &Vector<String>) -> Self {
+        LoadedFile {
+            day_entries: day_entries.clone(),
+            warnings: warnings.clone(),
+        }
+    }
+
+    fn empty() -> Self {
+        LoadedFile {
+            day_entries: Vector::new(),
+            warnings: Vector::new(),
+        }
+    }
+}
 impl<'a> Tracker<'a> {
     fn new(filename: &'a str) -> Tracker<'a> {
         Tracker {
             filename,
-            next_update_millis: 0,
+            loaded: LoadedFile::empty(),
+            last_update_millis: 0,
             update_delay_millis: 500,
             poll_wait_duration: Duration::from_millis(200),
         }
@@ -81,7 +100,7 @@ impl<'a> Tracker<'a> {
                     _ => Ok(DoNothing),
                 },
                 Event::Resize(_, _) => {
-                    let loaded = self.load(true);
+                    let loaded = self.load(false);
                     match loaded {
                         Ok(Some(loaded)) => Ok(Reloaded(loaded)),
                         Ok(None) => Ok(DoNothing),
@@ -100,33 +119,37 @@ impl<'a> Tracker<'a> {
         }
     }
 
-    fn load(&mut self, reload: bool) -> Result<Option<LoadedFile>, AppError> {
+    fn load(&mut self, skip_delay: bool) -> Result<Option<LoadedFile>, AppError> {
         let current_file_millis = get_last_modified(self.filename)?;
-        if current_file_millis < self.next_update_millis && !reload {
+        if current_file_millis == self.last_update_millis {
             return Ok(None);
         }
-        self.next_update_millis = current_file_millis + self.update_delay_millis;
+        let next_update_millis = self.last_update_millis + self.update_delay_millis;
+        if current_file_millis < next_update_millis && !skip_delay {
+            return Ok(None);
+        }
+        self.last_update_millis = current_file_millis;
         let (day_entries, warnings) = parse::parse_file(self.filename)?;
-        Ok(Some(LoadedFile {
-            day_entries,
-            warnings,
-        }))
+        self.loaded = LoadedFile::new(&day_entries, &warnings);
+        Ok(Some(self.loaded.clone()))
     }
 
     fn append(&mut self) -> Result<(), AppError> {
-        let (day_entries, _) = parse::parse_file(self.filename)?;
+        self.load(true)?;
         let date = Date::today();
-        append::validate_date(&day_entries, date)?;
+        let day_entries = self.loaded.day_entries();
+        append::validate_date(day_entries, date)?;
 
         let min_date = date.minus_days(30)?;
-        let recent_projects = append::recent_projects(&day_entries, min_date, 5);
+        let recent_projects = append::recent_projects(day_entries, min_date, 5);
         append::append_to_file(self.filename, date, recent_projects)
     }
 
     fn edit(&mut self) -> Result<Option<LoadedFile>, AppError> {
         let io_err = |detail: &str, e: std::io::Error| AppError::from_error("edit", detail, e);
-        let (day_entries, _) = parse::parse_file(self.filename)?;
-        let line_number = day_entries
+        let line_number = self
+            .loaded
+            .day_entries()
             .iter()
             .next_back()
             .map(|e| e.line_number())
