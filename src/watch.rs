@@ -1,7 +1,6 @@
 use crate::core::AppError;
 use crate::model::{Date, DateRange, DayEntry};
 use crate::report;
-use crate::watch::PollOutcome::{Changed, DoNothing, LoadFailed, Reloaded};
 use crate::{append, parse};
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::KeyCode;
@@ -15,10 +14,9 @@ use std::env;
 use std::fs;
 use std::io::{Write, stdout};
 use std::process::Command;
-use std::thread;
 use std::time::{Duration, SystemTime, SystemTimeError};
 
-struct Tracker<'a> {
+struct UI<'a> {
     filename: &'a str,
     last_update_millis: u128,
     loaded: LoadedFile,
@@ -32,12 +30,11 @@ struct LoadedFile {
     warnings: Vector<String>,
 }
 
-enum PollOutcome {
+enum UICommand {
     DoNothing,
     Quit,
-    Reloaded(LoadedFile),
-    Changed(LoadedFile),
-    LoadFailed(AppError),
+    Report(LoadedFile),
+    DisplayError(AppError),
 }
 
 impl LoadedFile {
@@ -55,53 +52,47 @@ impl LoadedFile {
         }
     }
 }
-impl<'a> Tracker<'a> {
-    fn new(filename: &'a str) -> Tracker<'a> {
-        Tracker {
+
+impl<'a> UI<'a> {
+    fn new(filename: &'a str) -> UI<'a> {
+        UI {
             filename,
             loaded: LoadedFile::empty(),
             last_update_millis: 0,
             update_delay_millis: 500,
-            poll_wait_duration: Duration::from_millis(200),
+            poll_wait_duration: Duration::from_millis(100),
         }
     }
 
-    fn next_command(&mut self) -> Result<PollOutcome, AppError> {
+    fn next_command(&mut self) -> Result<UICommand, AppError> {
         let io_err =
             |detail: &str, e: std::io::Error| AppError::from_error("next_command", detail, e);
         if poll(self.poll_wait_duration).map_err(|e| io_err("poll", e))? {
             match read().map_err(|e| io_err("read", e))? {
                 Event::Key(event) => match event.code {
-                    KeyCode::Char('q') => Ok(PollOutcome::Quit),
-                    KeyCode::Char('r') | KeyCode::Enter => {
-                        let loaded = self.load(true);
-                        match loaded {
-                            Ok((_, loaded)) => Ok(Reloaded(loaded)),
-                            Err(e) => Ok(LoadFailed(e)),
-                        }
-                    }
+                    KeyCode::Char('q') => Ok(UICommand::Quit),
+                    KeyCode::Char('r') | KeyCode::Enter => match self.load(true) {
+                        Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
+                        Err(e) => Ok(UICommand::DisplayError(e)),
+                    },
                     KeyCode::Char('e') => match self.edit() {
-                        Ok((true, loaded)) => Ok(Changed(loaded)),
-                        Ok((false, _)) => Ok(DoNothing),
-                        Err(e) => Ok(LoadFailed(e)),
+                        Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
+                        Err(e) => Ok(UICommand::DisplayError(e)),
                     },
                     KeyCode::Char('a') => match self.append() {
-                        Ok((_, loaded)) => Ok(Changed(loaded)),
-                        Err(e) => Ok(LoadFailed(e)),
+                        Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
+                        Err(e) => Ok(UICommand::DisplayError(e)),
                     },
-                    _ => Ok(DoNothing),
+                    _ => Ok(UICommand::DoNothing),
                 },
-                Event::Resize(_, _) => match self.load(false) {
-                    Ok((_, loaded)) => Ok(Reloaded(loaded)),
-                    Err(e) => Ok(LoadFailed(e)),
-                },
-                _ => Ok(DoNothing),
+                Event::Resize(_, _) => Ok(UICommand::Report(self.loaded.clone())),
+                _ => Ok(UICommand::DoNothing),
             }
         } else {
             match self.load(false) {
-                Ok((true, loaded)) => Ok(Changed(loaded)),
-                Ok((false, _)) => Ok(DoNothing),
-                Err(e) => Ok(LoadFailed(e)),
+                Ok((true, loaded)) => Ok(UICommand::Report(loaded)),
+                Ok((false, _)) => Ok(UICommand::DoNothing),
+                Err(e) => Ok(UICommand::DisplayError(e)),
             }
         }
     }
@@ -184,21 +175,16 @@ pub fn watch_and_report(filename: &str, dates: DateRange) -> Result<(), AppError
     defer! {
         restore_term();
     }
-    let mut tracker = Tracker::new(filename);
+    let mut tracker = UI::new(filename);
     loop {
         let outcome = tracker.next_command()?;
         match outcome {
-            PollOutcome::Quit => return Ok(()),
-            PollOutcome::DoNothing => {
-                thread::sleep(tracker.poll_wait_duration);
-            }
-            PollOutcome::Reloaded(loaded) => {
+            UICommand::Quit => return Ok(()),
+            UICommand::DoNothing => {}
+            UICommand::Report(loaded) => {
                 print_file(&loaded, dates)?;
             }
-            PollOutcome::Changed(loaded) => {
-                print_file(&loaded, dates)?;
-            }
-            PollOutcome::LoadFailed(error) => {
+            UICommand::DisplayError(error) => {
                 print_error(filename, error)?;
             }
         }
