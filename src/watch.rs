@@ -1,5 +1,5 @@
 use crate::core::AppError;
-use crate::model::{Date, DateRange, DayEntry};
+use crate::model::{Date, DateRange, DayEntry, Project};
 use crate::report;
 use crate::{append, parse};
 use crossterm::cursor::{Hide, Show};
@@ -16,12 +16,255 @@ use std::io::{Write, stdout};
 use std::process::Command;
 use std::time::{Duration, SystemTime, SystemTimeError};
 
-struct UI<'a> {
+enum ReadResult {
+    Char(char),
+    Enter,
+    Resized,
+    Timeout,
+}
+
+trait Terminal {
+    fn start(&self) -> Result<(), AppError>;
+    fn stop(&self) -> Result<(), AppError>;
+    fn read(&self, timeout: Duration) -> Result<ReadResult, AppError>;
+    fn clear(&self) -> Result<(), AppError>;
+    fn println(&self, s: &str);
+}
+
+trait Storage {
+    fn timestamp(&mut self, filename: &str) -> Result<u128, AppError>;
+    fn load(&mut self, filename: &str) -> Result<LoadedFile, AppError>;
+    fn append(
+        &mut self,
+        filename: &str,
+        date: Date,
+        recent_projects: Vector<&Project>,
+    ) -> Result<(), AppError>;
+}
+
+trait AppLogic {
+    fn run(
+        &mut self,
+        terminal: &dyn Terminal,
+        storage: &mut dyn Storage,
+        editor: &mut dyn Editor,
+    ) -> Result<UICommand, AppError>;
+}
+
+trait Editor {
+    fn edit_file(&self, filename: &str, line_number: u32) -> Result<(), AppError>;
+}
+
+struct RealTerminal {}
+impl Terminal for RealTerminal {
+    fn start(&self) -> Result<(), AppError> {
+        let io_err = |detail: &str, e: std::io::Error| AppError::from_error("init_term", detail, e);
+        terminal::enable_raw_mode().map_err(|e| io_err("enable_raw_mode", e))?;
+        execute!(stdout(), Hide).map_err(|e| io_err("hide cursor", e))?;
+        Ok(())
+    }
+
+    fn stop(&self) -> Result<(), AppError> {
+        _ = execute!(stdout(), Show);
+        _ = terminal::disable_raw_mode();
+        Ok(())
+    }
+
+    fn read(&self, timeout: Duration) -> Result<ReadResult, AppError> {
+        let io_err =
+            |detail: &str, e: std::io::Error| AppError::from_error("RealTerminal.read", detail, e);
+        while poll(timeout).map_err(|e| io_err("poll", e))? {
+            match read().map_err(|e| io_err("read", e))? {
+                Event::Key(event) => match event.code {
+                    KeyCode::Char(c) => return Ok(ReadResult::Char(c)),
+                    KeyCode::Enter => return Ok(ReadResult::Enter),
+                    _ => {}
+                },
+                Event::Resize(_, _) => return Ok(ReadResult::Resized),
+                _ => {}
+            }
+        }
+        Ok(ReadResult::Timeout)
+    }
+
+    fn clear(&self) -> Result<(), AppError> {
+        let io_err =
+            |detail: &str, e: std::io::Error| AppError::from_error("RealTerminal.clear", detail, e);
+        let mut out = stdout();
+        out.queue(terminal::Clear(terminal::ClearType::All))
+            .map_err(|e| io_err("queue.Clear", e))?;
+        out.queue(cursor::MoveTo(0, 0))
+            .map_err(|e| io_err("queue.MoveTo", e))?;
+        out.flush().map_err(|e| io_err("flush", e))?;
+        Ok(())
+    }
+
+    fn println(&self, s: &str) {
+        println!("{}\r", s);
+    }
+}
+
+struct RealStorage {}
+impl Storage for RealStorage {
+    fn timestamp(&mut self, filename: &str) -> Result<u128, AppError> {
+        let io_err = |detail: &str, e: std::io::Error| {
+            AppError::from_error("RealStorage.timestamp", detail, e)
+        };
+        let time_err = |detail: &str, e: SystemTimeError| {
+            AppError::from_error("RealStorage.timestamp", detail, e)
+        };
+        let metadata = fs::metadata(filename).map_err(|e| io_err("metadata", e))?;
+        let modified = metadata.modified().map_err(|e| io_err("modified", e))?;
+        let millis = modified
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_err(|e| time_err("duration_since", e))?
+            .as_millis();
+        Ok(millis)
+    }
+
+    fn load(&mut self, filename: &str) -> Result<LoadedFile, AppError> {
+        let (day_entries, warnings) = parse::parse_file(filename)?;
+        Ok(LoadedFile::new(&day_entries, &warnings))
+    }
+
+    fn append(
+        &mut self,
+        filename: &str,
+        date: Date,
+        recent_projects: Vector<&Project>,
+    ) -> Result<(), AppError> {
+        append::append_to_file(filename, date, recent_projects)
+    }
+}
+
+struct RealEditor {}
+impl Editor for RealEditor {
+    fn edit_file(&self, filename: &str, line_number: u32) -> Result<(), AppError> {
+        let io_err = |detail: &str, e: std::io::Error| {
+            AppError::from_error("RealEditor.edit_file", detail, e)
+        };
+        let editor = get_editor();
+        let mut command = Command::new(editor.clone());
+        if supports_line_num_arg(editor.as_str()) {
+            let line_param = format!("+{}", line_number + 1);
+            command.arg(line_param);
+        }
+        command.arg(filename);
+        let status = command
+            .spawn()
+            .map_err(|e| io_err("spawn", e))?
+            .wait()
+            .map_err(|e| io_err("wait", e))?;
+        if !status.success() {
+            return Err(AppError::from_str("edit", "editor command failed"));
+        }
+        Ok(())
+    }
+}
+
+struct RealAppLogic<'a> {
     filename: &'a str,
     last_update_millis: u128,
     loaded: LoadedFile,
-    poll_wait_duration: Duration,
+    read_timeout: Duration,
     update_delay_millis: u128,
+}
+
+impl<'a> RealAppLogic<'a> {
+    fn new(filename: &'a str) -> RealAppLogic<'a> {
+        RealAppLogic {
+            filename,
+            loaded: LoadedFile::empty(),
+            last_update_millis: 0,
+            update_delay_millis: 500,
+            read_timeout: Duration::from_millis(100),
+        }
+    }
+
+    fn load(
+        &mut self,
+        storage: &mut dyn Storage,
+        skip_delay: bool,
+    ) -> Result<(bool, LoadedFile), AppError> {
+        let current_file_millis = storage.timestamp(self.filename)?;
+        if current_file_millis == self.last_update_millis {
+            return Ok((false, self.loaded.clone()));
+        }
+        let next_update_millis = self.last_update_millis + self.update_delay_millis;
+        if current_file_millis < next_update_millis && !skip_delay {
+            return Ok((false, self.loaded.clone()));
+        }
+        self.last_update_millis = current_file_millis;
+        self.loaded = storage.load(self.filename)?;
+        Ok((true, self.loaded.clone()))
+    }
+
+    fn append(&mut self, storage: &mut dyn Storage) -> Result<(bool, LoadedFile), AppError> {
+        self.load(storage, true)?;
+        let date = Date::today();
+        let day_entries = self.loaded.day_entries();
+        append::validate_date(day_entries, date)?;
+
+        let min_date = date.minus_days(30)?;
+        let recent_projects = append::recent_projects(day_entries, min_date, 5);
+        storage.append(self.filename, date, recent_projects)?;
+        self.load(storage, true)
+    }
+
+    fn edit(
+        &mut self,
+        storage: &mut dyn Storage,
+        terminal: &dyn Terminal,
+        editor: &mut dyn Editor,
+    ) -> Result<(bool, LoadedFile), AppError> {
+        let line_number = self
+            .loaded
+            .day_entries()
+            .iter()
+            .next_back()
+            .map(|e| e.line_number())
+            .unwrap_or(&0);
+
+        terminal.stop()?;
+        defer! {
+            _=terminal.start();
+        }
+
+        editor.edit_file(self.filename, *line_number)?;
+        self.load(storage, true)
+    }
+}
+
+impl AppLogic for RealAppLogic<'_> {
+    fn run(
+        &mut self,
+        terminal: &dyn Terminal,
+        storage: &mut dyn Storage,
+        editor: &mut dyn Editor,
+    ) -> Result<UICommand, AppError> {
+        match terminal.read(self.read_timeout)? {
+            ReadResult::Char('q') => Ok(UICommand::Quit),
+            ReadResult::Char('r') | ReadResult::Enter => match self.load(storage, true) {
+                Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
+                Err(e) => Ok(UICommand::DisplayError(e)),
+            },
+            ReadResult::Char('e') => match self.edit(storage, terminal, editor) {
+                Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
+                Err(e) => Ok(UICommand::DisplayError(e)),
+            },
+            ReadResult::Char('a') => match self.append(storage) {
+                Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
+                Err(e) => Ok(UICommand::DisplayError(e)),
+            },
+            ReadResult::Resized => Ok(UICommand::Report(self.loaded.clone())),
+            ReadResult::Timeout => match self.load(storage, false) {
+                Ok((true, loaded)) => Ok(UICommand::Report(loaded)),
+                Ok((false, _)) => Ok(UICommand::DoNothing),
+                Err(e) => Ok(UICommand::DisplayError(e)),
+            },
+            _ => Ok(UICommand::DoNothing),
+        }
+    }
 }
 
 #[derive(Clone, Getters)]
@@ -53,188 +296,66 @@ impl LoadedFile {
     }
 }
 
-impl<'a> UI<'a> {
-    fn new(filename: &'a str) -> UI<'a> {
-        UI {
-            filename,
-            loaded: LoadedFile::empty(),
-            last_update_millis: 0,
-            update_delay_millis: 500,
-            poll_wait_duration: Duration::from_millis(100),
-        }
-    }
-
-    fn next_command(&mut self) -> Result<UICommand, AppError> {
-        let io_err =
-            |detail: &str, e: std::io::Error| AppError::from_error("next_command", detail, e);
-        if poll(self.poll_wait_duration).map_err(|e| io_err("poll", e))? {
-            match read().map_err(|e| io_err("read", e))? {
-                Event::Key(event) => match event.code {
-                    KeyCode::Char('q') => Ok(UICommand::Quit),
-                    KeyCode::Char('r') | KeyCode::Enter => match self.load(true) {
-                        Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
-                        Err(e) => Ok(UICommand::DisplayError(e)),
-                    },
-                    KeyCode::Char('e') => match self.edit() {
-                        Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
-                        Err(e) => Ok(UICommand::DisplayError(e)),
-                    },
-                    KeyCode::Char('a') => match self.append() {
-                        Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
-                        Err(e) => Ok(UICommand::DisplayError(e)),
-                    },
-                    _ => Ok(UICommand::DoNothing),
-                },
-                Event::Resize(_, _) => Ok(UICommand::Report(self.loaded.clone())),
-                _ => Ok(UICommand::DoNothing),
-            }
-        } else {
-            match self.load(false) {
-                Ok((true, loaded)) => Ok(UICommand::Report(loaded)),
-                Ok((false, _)) => Ok(UICommand::DoNothing),
-                Err(e) => Ok(UICommand::DisplayError(e)),
-            }
-        }
-    }
-
-    fn load(&mut self, skip_delay: bool) -> Result<(bool, LoadedFile), AppError> {
-        let current_file_millis = get_last_modified(self.filename)?;
-        if current_file_millis == self.last_update_millis {
-            return Ok((false, self.loaded.clone()));
-        }
-        let next_update_millis = self.last_update_millis + self.update_delay_millis;
-        if current_file_millis < next_update_millis && !skip_delay {
-            return Ok((false, self.loaded.clone()));
-        }
-        self.last_update_millis = current_file_millis;
-        let (day_entries, warnings) = parse::parse_file(self.filename)?;
-        self.loaded = LoadedFile::new(&day_entries, &warnings);
-        Ok((true, self.loaded.clone()))
-    }
-
-    fn append(&mut self) -> Result<(bool, LoadedFile), AppError> {
-        self.load(true)?;
-        let date = Date::today();
-        let day_entries = self.loaded.day_entries();
-        append::validate_date(day_entries, date)?;
-
-        let min_date = date.minus_days(30)?;
-        let recent_projects = append::recent_projects(day_entries, min_date, 5);
-        append::append_to_file(self.filename, date, recent_projects)?;
-        self.load(true)
-    }
-
-    fn edit(&mut self) -> Result<(bool, LoadedFile), AppError> {
-        let io_err = |detail: &str, e: std::io::Error| AppError::from_error("edit", detail, e);
-        let line_number = self
-            .loaded
-            .day_entries()
-            .iter()
-            .next_back()
-            .map(|e| e.line_number())
-            .unwrap_or(&0);
-
-        restore_term();
-        defer! {
-            _=init_term();
-        }
-
-        let editor = get_editor();
-        let mut command = Command::new(editor.clone());
-        if supports_line_num_arg(editor.as_str()) {
-            let line_param = format!("+{}", line_number + 1);
-            command.arg(line_param);
-        }
-        command.arg(self.filename);
-        let status = command
-            .spawn()
-            .map_err(|e| io_err("spawn", e))?
-            .wait()
-            .map_err(|e| io_err("wait", e))?;
-        if !status.success() {
-            return Err(AppError::from_str("edit", "editor command failed"));
-        }
-        self.load(true)
-    }
-}
-
-fn init_term() -> Result<(), AppError> {
-    let io_err = |detail: &str, e: std::io::Error| AppError::from_error("init_term", detail, e);
-    terminal::enable_raw_mode().map_err(|e| io_err("enable_raw_mode", e))?;
-    execute!(stdout(), Hide).map_err(|e| io_err("hide cursor", e))?;
-    Ok(())
-}
-
-fn restore_term() {
-    _ = execute!(stdout(), Show);
-    _ = terminal::disable_raw_mode();
-}
-
-pub fn watch_and_report(filename: &str, dates: DateRange) -> Result<(), AppError> {
-    init_term()?;
+fn ui_impl(
+    filename: &str,
+    dates: DateRange,
+    terminal: &dyn Terminal,
+    editor: &mut dyn Editor,
+    storage: &mut dyn Storage,
+    logic: &mut dyn AppLogic,
+) -> Result<(), AppError> {
+    terminal.start()?;
     defer! {
-        restore_term();
+        _=terminal.stop();
     }
-    let mut tracker = UI::new(filename);
+
     loop {
-        let outcome = tracker.next_command()?;
+        let outcome = logic.run(terminal, storage, editor)?;
         match outcome {
             UICommand::Quit => return Ok(()),
             UICommand::DoNothing => {}
             UICommand::Report(loaded) => {
-                print_file(&loaded, dates)?;
+                print_file(&loaded, dates, terminal)?;
             }
             UICommand::DisplayError(error) => {
-                print_error(filename, error)?;
+                print_error(filename, error, terminal)?;
             }
         }
     }
 }
 
-fn print_error(filename: &str, error: AppError) -> Result<(), AppError> {
-    clear_screen()?;
-    println!(
-        "error reading file: filename={} error={}\r",
-        filename, error
-    );
-    println!("\r\nPress r or ENTER to continue...\r");
+pub fn watch_and_report(filename: &str, dates: DateRange) -> Result<(), AppError> {
+    ui_impl(
+        filename,
+        dates,
+        &RealTerminal {},
+        &mut RealEditor {},
+        &mut RealStorage {},
+        &mut RealAppLogic::new(filename),
+    )
+}
+
+fn print_error(filename: &str, error: AppError, terminal: &dyn Terminal) -> Result<(), AppError> {
+    terminal.clear()?;
+    terminal.println(format!("error reading file: filename={} error={}", filename, error).as_str());
+    terminal.println("");
+    terminal.println("Press r or ENTER to continue...");
     Ok(())
 }
 
-fn print_file(file: &LoadedFile, dates: DateRange) -> Result<(), AppError> {
-    clear_screen()?;
+fn print_file(
+    file: &LoadedFile,
+    dates: DateRange,
+    terminal: &dyn Terminal,
+) -> Result<(), AppError> {
+    terminal.clear()?;
     file.warnings
         .iter()
-        .for_each(|w| println!("warning: {w}\r"));
+        .for_each(|w| terminal.println(format!("warning: {w}").as_str()));
     let lines = report::create_report(dates, &file.day_entries)?;
     for line in lines {
-        println!("{}\r", line);
+        terminal.println(line.as_str());
     }
-    Ok(())
-}
-
-fn get_last_modified(filename: &str) -> Result<u128, AppError> {
-    let io_err =
-        |detail: &str, e: std::io::Error| AppError::from_error("get_last_modified", detail, e);
-    let time_err =
-        |detail: &str, e: SystemTimeError| AppError::from_error("get_last_modified", detail, e);
-    let metadata = fs::metadata(filename).map_err(|e| io_err("metadata", e))?;
-    let modified = metadata.modified().map_err(|e| io_err("modified", e))?;
-    let millis = modified
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map_err(|e| time_err("duration_since", e))?
-        .as_millis();
-    Ok(millis)
-}
-
-fn clear_screen() -> Result<(), AppError> {
-    let io_err = |detail: &str, e: std::io::Error| AppError::from_error("clear_screen", detail, e);
-    let mut out = stdout();
-    out.queue(terminal::Clear(terminal::ClearType::All))
-        .map_err(|e| io_err("Clear", e))?;
-    out.queue(cursor::MoveTo(0, 0))
-        .map_err(|e| io_err("MoveTo", e))?;
-    out.flush().map_err(|e| io_err("flush", e))?;
     Ok(())
 }
 
