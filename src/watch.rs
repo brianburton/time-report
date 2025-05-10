@@ -7,7 +7,9 @@ use crossterm::event::KeyCode;
 use crossterm::event::{Event, poll, read};
 use crossterm::{QueueableCommand, cursor, terminal};
 use im::Vector;
+use regex::Regex;
 use scopeguard::defer;
+use std::env;
 use std::fs;
 use std::io::{Write, stdout};
 use std::process::Command;
@@ -121,8 +123,7 @@ impl<'a> Tracker<'a> {
     }
 
     fn edit(&mut self) -> Result<Option<LoadedFile>, AppError> {
-        let io_err =
-            |detail: &str, e: std::io::Error| AppError::from_error("watch_and_report", detail, e);
+        let io_err = |detail: &str, e: std::io::Error| AppError::from_error("edit", detail, e);
         let (day_entries, _) = parse::parse_file(self.filename)?;
         let line_number = day_entries
             .iter()
@@ -130,10 +131,14 @@ impl<'a> Tracker<'a> {
             .map(|e| e.line_number())
             .unwrap_or(&0);
 
-        let line_param = format!("+{}", line_number + 1);
-        let status = Command::new("hx")
-            .arg(line_param)
-            .arg(self.filename)
+        let editor = get_editor();
+        let mut command = Command::new(editor.clone());
+        if supports_line_num_arg(editor.as_str()) {
+            let line_param = format!("+{}", line_number + 1);
+            command.arg(line_param);
+        }
+        command.arg(self.filename);
+        let status = command
             .spawn()
             .map_err(|e| io_err("spawn", e))?
             .wait()
@@ -217,4 +222,14 @@ fn clear_screen() -> Result<(), AppError> {
         .map_err(|e| io_err("MoveTo", e))?;
     out.flush().map_err(|e| io_err("flush", e))?;
     Ok(())
+}
+
+fn get_editor() -> String {
+    env::var("EDITOR").unwrap_or_else(|_| "vi".to_string())
+}
+
+fn supports_line_num_arg(editor: &str) -> bool {
+    Regex::new(r"^(.*/)?((vim?)|(hx))$")
+        .unwrap()
+        .is_match(editor)
 }
