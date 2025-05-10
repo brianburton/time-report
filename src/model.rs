@@ -417,13 +417,15 @@ impl ProjectTimes {
 pub struct DayEntry {
     date: Date,
     projects: Vector<ProjectTimes>,
+    line_number: u32,
 }
 
 impl DayEntry {
-    pub fn new(date: Date, projects: &Vector<ProjectTimes>) -> Self {
+    pub fn new(date: Date, projects: &Vector<ProjectTimes>, line_number: u32) -> Self {
         DayEntry {
             date,
             projects: projects.clone(),
+            line_number,
         }
     }
 }

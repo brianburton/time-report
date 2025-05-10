@@ -78,6 +78,7 @@ fn test_parse_file() {
             )
             .unwrap(),
         ),
+        0
     ));
 
     let result = parse_file(file_path).unwrap();

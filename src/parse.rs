@@ -122,6 +122,7 @@ pub fn parse_file(file_path: &str) -> Result<(Vector<DayEntry>, Vector<String>),
     let mut warnings = Vector::new();
     let mut line_num = 0;
 
+    let mut date_line_num = 0;
     for raw_line in reader.lines() {
         line_num += 1;
         let line = raw_line
@@ -129,6 +130,7 @@ pub fn parse_file(file_path: &str) -> Result<(Vector<DayEntry>, Vector<String>),
             .map_err(|e| AppError::from_error("parse_file", "read", e))?;
 
         if is_date_line(line.as_str()) {
+            date_line_num = line_num;
             let new_date = parse_date_line(&line)?;
             if have_date {
                 if new_date <= date {
@@ -136,7 +138,7 @@ pub fn parse_file(file_path: &str) -> Result<(Vector<DayEntry>, Vector<String>),
                         "out of order dates:{line_num}: prev='{date}' new='{new_date}'"
                     ));
                 }
-                days.push_back(DayEntry::new(date, &projects));
+                days.push_back(DayEntry::new(date, &projects, date_line_num));
             } else {
                 have_date = true;
             }
@@ -175,7 +177,7 @@ pub fn parse_file(file_path: &str) -> Result<(Vector<DayEntry>, Vector<String>),
     }
 
     if have_date {
-        days.push_back(DayEntry::new(date, &projects));
+        days.push_back(DayEntry::new(date, &projects, date_line_num));
     }
 
     Ok((days, warnings))

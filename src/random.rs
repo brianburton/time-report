@@ -100,7 +100,7 @@ pub fn random_day_entries(rnd: &mut Random, dates: DateRange) -> Vector<DayEntry
 fn random_day_entry(rnd: &mut Random, day: Date, projects: &Vector<&Project>) -> DayEntry {
     let time_ranges = random_time_ranges(rnd);
     let project_times = random_project_times(rnd, projects, &time_ranges);
-    DayEntry::new(day, &project_times)
+    DayEntry::new(day, &project_times, 0)
 }
 
 fn random_project_times(

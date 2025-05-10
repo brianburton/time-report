@@ -2,15 +2,15 @@ use crate::core::AppError;
 use crate::model::{Date, DateRange, DayEntry};
 use crate::report;
 use crate::watch::PollOutcome::{Changed, DoNothing, LoadFailed, Reloaded};
-use crate::{append, load_file, parse};
+use crate::{append, parse};
 use crossterm::event::KeyCode;
 use crossterm::event::{Event, poll, read};
 use crossterm::{QueueableCommand, cursor, terminal};
 use im::Vector;
 use scopeguard::defer;
-use std::env::Args;
 use std::fs;
 use std::io::{Write, stdout};
+use std::process::Command;
 use std::thread;
 use std::time::{Duration, SystemTime, SystemTimeError};
 
@@ -53,6 +53,14 @@ impl<'a> Tracker<'a> {
                     KeyCode::Char('q') => Ok(PollOutcome::Quit),
                     KeyCode::Char('r') => {
                         let loaded = self.load(true);
+                        match loaded {
+                            Ok(Some(loaded)) => Ok(Reloaded(loaded)),
+                            Ok(None) => Ok(DoNothing),
+                            Err(e) => Ok(LoadFailed(e)),
+                        }
+                    }
+                    KeyCode::Char('e') => {
+                        let loaded = self.edit();
                         match loaded {
                             Ok(Some(loaded)) => Ok(Reloaded(loaded)),
                             Ok(None) => Ok(DoNothing),
@@ -110,6 +118,30 @@ impl<'a> Tracker<'a> {
         let min_date = date.minus_days(30)?;
         let recent_projects = append::recent_projects(&day_entries, min_date, 5);
         append::append_to_file(self.filename, date, recent_projects)
+    }
+
+    fn edit(&mut self) -> Result<Option<LoadedFile>, AppError> {
+        let io_err =
+            |detail: &str, e: std::io::Error| AppError::from_error("watch_and_report", detail, e);
+        let (day_entries, _) = parse::parse_file(self.filename)?;
+        let line_number = day_entries
+            .iter()
+            .next_back()
+            .map(|e| e.line_number())
+            .unwrap_or(&0);
+
+        let line_param = format!("+{}", line_number + 1);
+        let status = Command::new("hx")
+            .arg(line_param)
+            .arg(self.filename)
+            .spawn()
+            .map_err(|e| io_err("spawn", e))?
+            .wait()
+            .map_err(|e| io_err("wait", e))?;
+        if !status.success() {
+            return Err(AppError::from_str("edit", "editor command failed"));
+        }
+        self.load(true)
     }
 }
 
