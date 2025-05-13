@@ -130,6 +130,7 @@ struct ReportData {
     projects: OrdSet<Project>,
     dates: DateRange,
     totals: WeekData,
+    weekdays: usize,
 }
 
 pub fn create_report(
@@ -176,11 +177,22 @@ fn compute_report_data(
     weeks.insert(current_week, current_data);
 
     let projects = unique_projects(&day_entries);
+    let last_date = day_entries.last().map(|e| *e.date());
+    let weekdays = last_date
+        .map(|ld| {
+            day_entries
+                .iter()
+                .filter(|e| *e.date() <= ld)
+                .filter(|e| e.date().is_weekday())
+                .count()
+        })
+        .unwrap_or(0);
     Ok(ReportData {
         weeks,
         totals,
         projects,
         dates,
+        weekdays,
     })
 }
 
@@ -240,6 +252,21 @@ fn render_time(minutes: u32, hour_len: usize) -> String {
             minutes / 60,
             minutes % 60,
             width = hour_len
+        )
+    }
+}
+
+fn render_delta(delta_minutes: i32, hour_len: usize) -> String {
+    let minutes = delta_minutes.abs();
+    if minutes == 0 {
+        format!("{:>width$}", "-", width = hour_len + 3)
+    } else {
+        format!(
+            "{}{:>width$}:{:02}",
+            if delta_minutes < 0 { "-" } else { "+" },
+            minutes / 60,
+            minutes % 60,
+            width = hour_len - 1
         )
     }
 }
@@ -309,7 +336,11 @@ fn render_billables_line(monday: Date, week_data: &WeekData) -> Result<String, A
     Ok(line)
 }
 
-fn render_grand_totals(projects: &OrdSet<Project>, totals_data: &WeekData) -> Vector<String> {
+fn render_grand_totals(
+    projects: &OrdSet<Project>,
+    totals_data: &WeekData,
+    expected_time: u32,
+) -> Vector<String> {
     let mut answer = Vector::new();
     let label_width = 3 + projects
         .iter()
@@ -353,6 +384,15 @@ fn render_grand_totals(projects: &OrdSet<Project>, totals_data: &WeekData) -> Ve
         "REPORT",
         "",
         render_time(totals_data.week_billable(), 3),
+        lw = label_width,
+        pad = COLUMN_PAD
+    ));
+    let delta: i32 = (totals_data.week_billable() as i32) - (expected_time as i32);
+    answer.push_back(format!(
+        "{:lw$}{:pad$}{}",
+        "DELTA",
+        "",
+        render_delta(delta, 3),
         lw = label_width,
         pad = COLUMN_PAD
     ));
@@ -405,9 +445,11 @@ fn render_report_data(report_data: &ReportData) -> Result<Vector<String>, AppErr
             render_billables_line(d, week_data)?
         ));
     }
+    let expected_time = 480 * report_data.weekdays;
     answer.append(render_grand_totals(
         &report_data.projects,
         &report_data.totals,
+        expected_time as u32,
     ));
     Ok(answer)
 }

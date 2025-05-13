@@ -142,6 +142,10 @@ impl Date {
         day_of_week == 5 || day_of_week == 6
     }
 
+    pub fn is_weekday(&self) -> bool {
+        !self.is_weekend()
+    }
+
     pub fn this_monday(&self) -> Result<Date, AppError> {
         if self.is_monday() {
             Ok(*self)
