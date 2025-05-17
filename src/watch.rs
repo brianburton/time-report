@@ -220,8 +220,7 @@ impl<'a> RealAppLogic<'a> {
         let line_number = self
             .loaded
             .day_entries()
-            .iter()
-            .next_back()
+            .last()
             .map(|e| e.line_number())
             .unwrap_or(&0);
 
