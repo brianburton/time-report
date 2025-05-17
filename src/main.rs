@@ -25,7 +25,7 @@ fn command_append(args: &mut Args) -> Result<(), AppError> {
 }
 
 fn command_random(args: &mut Args) -> Result<(), AppError> {
-    let dates = load_dates(args)?;
+    let dates = load_dates(args)?();
     let mut rnd = random::Random::new();
     let day_entries = random::random_day_entries(&mut rnd, dates);
     for (date_count, de) in day_entries.into_iter().enumerate() {
@@ -49,7 +49,7 @@ fn command_random(args: &mut Args) -> Result<(), AppError> {
 
 fn command_report(args: &mut Args) -> Result<(), AppError> {
     let (_, all_day_entries) = load_file(args)?;
-    let dates = load_dates(args)?;
+    let dates = load_dates(args)?();
     println!("Reporting from {} to {}", dates.first(), dates.last());
 
     let lines = report::create_report(dates, &all_day_entries)?;
@@ -63,7 +63,7 @@ fn command_watch(args: &mut Args) -> Result<(), AppError> {
     let filename = get_filename(args)?;
     let dates = load_dates(args)?;
 
-    watch::watch_and_report(filename.as_str(), dates)?;
+    watch::watch_and_report(filename.as_str(), dates.as_ref())?;
     Ok(())
 }
 
@@ -84,15 +84,15 @@ fn get_filename(args: &mut Args) -> Result<String, AppError> {
     Ok(filename)
 }
 
-fn load_dates(args: &mut Args) -> Result<DateRange, AppError> {
-    let first_date_str = args.next();
-    let last_date_str = args.next();
-    let first_date_str = first_date_str.unwrap_or_else(|| Date::today().to_string());
-    let date_range = match last_date_str {
-        Some(s) => DateRange::new(Date::parse(&first_date_str)?, Date::parse(&s)?),
-        None => Date::parse(&first_date_str)?.semimonth_for_date(),
+fn load_dates(args: &mut Args) -> Result<Box<dyn Fn() -> DateRange>, AppError> {
+    let first_date = args.next().map(|s| Date::parse(&s)).transpose()?;
+    let last_date = args.next().map(|s| Date::parse(&s)).transpose()?;
+    let dates_fn: Box<dyn Fn() -> DateRange> = match (first_date, last_date) {
+        (Some(first), Some(last)) => Box::new(move || DateRange::new(first, last)),
+        (Some(date), None) => Box::new(move || date.semimonth_for_date()),
+        _ => Box::new(|| Date::today().semimonth_for_date()),
     };
-    Ok(date_range)
+    Ok(dates_fn)
 }
 
 fn main() -> Result<(), AppError> {

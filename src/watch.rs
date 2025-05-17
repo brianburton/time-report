@@ -298,7 +298,7 @@ impl LoadedFile {
 
 fn ui_impl(
     filename: &str,
-    dates: DateRange,
+    dates: &dyn Fn() -> DateRange,
     terminal: &dyn Terminal,
     editor: &mut dyn Editor,
     storage: &mut dyn Storage,
@@ -315,7 +315,7 @@ fn ui_impl(
             UICommand::Quit => return Ok(()),
             UICommand::DoNothing => {}
             UICommand::Report(loaded) => {
-                print_file(&loaded, dates, terminal)?;
+                print_file(&loaded, dates(), terminal)?;
             }
             UICommand::DisplayError(error) => {
                 print_error(filename, error, terminal)?;
@@ -324,7 +324,7 @@ fn ui_impl(
     }
 }
 
-pub fn watch_and_report(filename: &str, dates: DateRange) -> Result<(), AppError> {
+pub fn watch_and_report(filename: &str, dates: &dyn Fn() -> DateRange) -> Result<(), AppError> {
     ui_impl(
         filename,
         dates,
