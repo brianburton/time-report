@@ -14,8 +14,7 @@ pub fn recent_projects(
     max_to_return: usize,
 ) -> Vector<&Project> {
     let all_projects_map = recent_projects_with_date(all_day_entries, min_date);
-    let recent_projects = projects_sorted_by_date(all_projects_map, max_to_return);
-    recent_projects
+    projects_sorted_by_date(all_projects_map, max_to_return)
 }
 
 pub fn validate_date(all_day_entries: &Vector<DayEntry>, date: Date) -> Result<(), AppError> {
