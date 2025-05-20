@@ -265,7 +265,7 @@ impl<'a> RealAppLogic<'a> {
         loop {
             match terminal.read(self.read_timeout)? {
                 ReadResult::Char(c) => {
-                    if let Some(x) = menu.find_item(c) {
+                    if let Some(x) = menu.select(c) {
                         return Ok(x);
                     } else {
                         continue;
