@@ -2,6 +2,7 @@ extern crate scopeguard;
 
 mod append;
 mod core;
+mod menu;
 mod model;
 mod parse;
 mod random;
@@ -9,10 +10,13 @@ mod report;
 mod watch;
 
 use core::AppError;
-use im::Vector;
+use im::{Vector, vector};
+use itertools::Itertools;
+use menu::{Menu, MenuItem};
 use model::{Date, DateRange, DayEntry};
-use std::env;
 use std::env::Args;
+use std::process::exit;
+use crossterm::style::Stylize;
 
 fn command_append(args: &mut Args) -> Result<(), AppError> {
     let (filename, all_day_entries) = load_file(args)?;
@@ -95,20 +99,44 @@ fn load_dates(args: &mut Args) -> Result<Box<dyn Fn() -> DateRange>, AppError> {
     Ok(dates_fn)
 }
 
-fn main() -> Result<(), AppError> {
-    let mut args = env::args();
-    let command = args
-        .nth(1)
-        .ok_or_else(|| AppError::from_str("main", "usage: missing command"))?;
+#[derive(Copy, Clone)]
+enum MenuValue {
+    Append,
+    Reload,
+    Quit,
+}
 
-    match command.as_str() {
-        "append" => command_append(&mut args),
-        "random" => command_random(&mut args),
-        "report" => command_report(&mut args),
-        "watch" => command_watch(&mut args),
-        _ => Err(AppError::from_str(
-            "main",
-            format!("usage: invalid command {}", command.as_str()).as_str(),
-        ))?,
+fn main() -> Result<(), AppError> {
+    let menu_items = vector!(
+        MenuItem::new(MenuValue::Append, "Append", "Add current date to the file."),
+        MenuItem::new(MenuValue::Reload, "Reload", "Force reload of file."),
+        MenuItem::new(MenuValue::Quit, "Quit", "Quit the program.")
+    );
+    let mut menu = Menu::new(menu_items.clone());
+    for _ in &menu_items {
+        println!("{}", menu.render());
+        println!("{}", menu.description().dark_yellow());
+        menu.right();
     }
+    for _ in &menu_items {
+        menu.left();
+        println!("{}", menu.render());
+        println!("{}", menu.description().dark_yellow());
+    }
+    exit(1);
+    // let mut args = env::args();
+    // let command = args
+    //     .nth(1)
+    //     .ok_or_else(|| AppError::from_str("main", "usage: missing command"))?;
+    //
+    // match command.as_str() {
+    //     "append" => command_append(&mut args),
+    //     "random" => command_random(&mut args),
+    //     "report" => command_report(&mut args),
+    //     "watch" => command_watch(&mut args),
+    //     _ => Err(AppError::from_str(
+    //         "main",
+    //         format!("usage: invalid command {}", command.as_str()).as_str(),
+    //     ))?,
+    // }
 }
