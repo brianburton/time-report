@@ -1,4 +1,5 @@
 use crate::core::AppError;
+use crate::menu::{Menu, MenuItem};
 use crate::model::{Date, DateRange, DayEntry, Project};
 use crate::report;
 use crate::{append, parse};
@@ -7,7 +8,7 @@ use crossterm::event::KeyCode;
 use crossterm::event::{Event, poll, read};
 use crossterm::{QueueableCommand, cursor, execute, terminal};
 use derive_getters::Getters;
-use im::Vector;
+use im::{Vector, vector};
 use regex::Regex;
 use scopeguard::defer;
 use std::env;
@@ -16,9 +17,12 @@ use std::io::{Write, stdout};
 use std::process::Command;
 use std::time::{Duration, SystemTime, SystemTimeError};
 
+#[derive(Copy, Clone)]
 enum ReadResult {
     Char(char),
     Enter,
+    Left,
+    Right,
     Resized,
     Timeout,
 }
@@ -29,6 +33,8 @@ trait Terminal {
     fn read(&self, timeout: Duration) -> Result<ReadResult, AppError>;
     fn clear(&self) -> Result<(), AppError>;
     fn println(&self, s: &str);
+    fn size(&self) -> Result<(u16, u16), AppError>;
+    fn goto(&self, row: u16, col: u16) -> Result<(), AppError>;
 }
 
 trait Storage {
@@ -45,6 +51,7 @@ trait Storage {
 trait AppLogic {
     fn run(
         &mut self,
+        menu: &mut Menu<ReadResult>,
         terminal: &dyn Terminal,
         storage: &mut dyn Storage,
         editor: &mut dyn Editor,
@@ -78,6 +85,8 @@ impl Terminal for RealTerminal {
                 Event::Key(event) => match event.code {
                     KeyCode::Char(c) => return Ok(ReadResult::Char(c)),
                     KeyCode::Enter => return Ok(ReadResult::Enter),
+                    KeyCode::Left => return Ok(ReadResult::Left),
+                    KeyCode::Right => return Ok(ReadResult::Right),
                     _ => {}
                 },
                 Event::Resize(_, _) => return Ok(ReadResult::Resized),
@@ -101,6 +110,20 @@ impl Terminal for RealTerminal {
 
     fn println(&self, s: &str) {
         println!("{}\r", s);
+    }
+
+    fn size(&self) -> Result<(u16, u16), AppError> {
+        terminal::size().map_err(|e| AppError::from_error("RealTerminal.size", "size", e))
+    }
+
+    fn goto(&self, row: u16, col: u16) -> Result<(), AppError> {
+        let io_err =
+            |detail: &str, e: std::io::Error| AppError::from_error("RealTerminal.goto", detail, e);
+        let mut out = stdout();
+        out.queue(cursor::MoveTo(col, row))
+            .map_err(|e| io_err("queue.MoveTo", e))?;
+        out.flush().map_err(|e| io_err("flush", e))?;
+        Ok(())
     }
 }
 
@@ -232,16 +255,39 @@ impl<'a> RealAppLogic<'a> {
         editor.edit_file(self.filename, *line_number)?;
         self.load(storage, true)
     }
+
+    fn read(
+        &mut self,
+        menu: &mut Menu<ReadResult>,
+        terminal: &dyn Terminal,
+    ) -> Result<ReadResult, AppError> {
+        loop {
+            match terminal.read(self.read_timeout)? {
+                ReadResult::Char(c) => {
+                    if let Some(x) = menu.find_item(c) {
+                        return Ok(x);
+                    } else {
+                        continue;
+                    }
+                }
+                ReadResult::Enter => return Ok(ReadResult::Char(menu.key())),
+                rr => {
+                    return Ok(rr);
+                }
+            }
+        }
+    }
 }
 
 impl AppLogic for RealAppLogic<'_> {
     fn run(
         &mut self,
+        menu: &mut Menu<ReadResult>,
         terminal: &dyn Terminal,
         storage: &mut dyn Storage,
         editor: &mut dyn Editor,
     ) -> Result<UICommand, AppError> {
-        match terminal.read(self.read_timeout)? {
+        match self.read(menu, terminal)? {
             ReadResult::Char('q') => Ok(UICommand::Quit),
             ReadResult::Char('r') | ReadResult::Enter => match self.load(storage, true) {
                 Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
@@ -255,6 +301,14 @@ impl AppLogic for RealAppLogic<'_> {
                 Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
                 Err(e) => Ok(UICommand::DisplayError(e)),
             },
+            ReadResult::Left => {
+                menu.left();
+                Ok(UICommand::UpdateMenu)
+            }
+            ReadResult::Right => {
+                menu.right();
+                Ok(UICommand::UpdateMenu)
+            }
             ReadResult::Resized => Ok(UICommand::Report(self.loaded.clone())),
             ReadResult::Timeout => match self.load(storage, false) {
                 Ok((true, loaded)) => Ok(UICommand::Report(loaded)),
@@ -276,6 +330,7 @@ enum UICommand {
     DoNothing,
     Quit,
     Report(LoadedFile),
+    UpdateMenu,
     DisplayError(AppError),
 }
 
@@ -298,6 +353,7 @@ impl LoadedFile {
 fn ui_impl(
     filename: &str,
     dates: &dyn Fn() -> DateRange,
+    menu: &mut Menu<ReadResult>,
     terminal: &dyn Terminal,
     editor: &mut dyn Editor,
     storage: &mut dyn Storage,
@@ -309,24 +365,42 @@ fn ui_impl(
     }
 
     loop {
-        let outcome = logic.run(terminal, storage, editor)?;
+        let outcome = logic.run(menu, terminal, storage, editor)?;
         match outcome {
-            UICommand::Quit => return Ok(()),
+            UICommand::Quit => {
+                terminal.clear()?;
+                return Ok(());
+            }
             UICommand::DoNothing => {}
             UICommand::Report(loaded) => {
-                print_file(&loaded, dates(), terminal)?;
+                print_file(&loaded, dates(), terminal, menu)?;
+            }
+            UICommand::UpdateMenu => {
+                display_menu(terminal, menu)?;
             }
             UICommand::DisplayError(error) => {
-                print_error(filename, error, terminal)?;
+                print_error(filename, error, terminal, menu)?;
             }
         }
     }
 }
 
 pub fn watch_and_report(filename: &str, dates: &dyn Fn() -> DateRange) -> Result<(), AppError> {
+    let menu_items = vector!(
+        MenuItem::new(ReadResult::Char('e'), "Edit", "Edit the file."),
+        MenuItem::new(
+            ReadResult::Char('a'),
+            "Append",
+            "Add current date to the file."
+        ),
+        MenuItem::new(ReadResult::Char('r'), "Reload", "Force reload of file."),
+        MenuItem::new(ReadResult::Char('q'), "Quit", "Quit the program.")
+    );
+    let mut menu = Menu::new(menu_items.clone());
     ui_impl(
         filename,
         dates,
+        &mut menu,
         &RealTerminal {},
         &mut RealEditor {},
         &mut RealStorage {},
@@ -334,8 +408,30 @@ pub fn watch_and_report(filename: &str, dates: &dyn Fn() -> DateRange) -> Result
     )
 }
 
-fn print_error(filename: &str, error: AppError, terminal: &dyn Terminal) -> Result<(), AppError> {
+fn display_menu(terminal: &dyn Terminal, menu: &Menu<ReadResult>) -> Result<(), AppError> {
+    let (_, cols) = terminal.size()?;
+    terminal.goto(0, 0)?;
+    terminal.println(
+        format!(
+            "{:width$}\r\n{:width$}\r",
+            menu.render().as_str(),
+            menu.description(),
+            width = cols as usize
+        )
+        .as_str(),
+    );
+    Ok(())
+}
+
+fn print_error(
+    filename: &str,
+    error: AppError,
+    terminal: &dyn Terminal,
+    menu: &Menu<ReadResult>,
+) -> Result<(), AppError> {
     terminal.clear()?;
+    display_menu(terminal, menu)?;
+    terminal.goto(3, 0)?;
     terminal.println(format!("error reading file: filename={} error={}", filename, error).as_str());
     terminal.println("");
     terminal.println("Press r or ENTER to continue...");
@@ -346,8 +442,11 @@ fn print_file(
     file: &LoadedFile,
     dates: DateRange,
     terminal: &dyn Terminal,
+    menu: &Menu<ReadResult>,
 ) -> Result<(), AppError> {
     terminal.clear()?;
+    display_menu(terminal, menu)?;
+    terminal.goto(3, 0)?;
     file.warnings
         .iter()
         .for_each(|w| terminal.println(format!("warning: {w}").as_str()));
