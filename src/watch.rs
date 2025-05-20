@@ -6,6 +6,7 @@ use crate::{append, parse};
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::KeyCode;
 use crossterm::event::{Event, poll, read};
+use crossterm::style::Stylize;
 use crossterm::{QueueableCommand, cursor, execute, terminal};
 use derive_getters::Getters;
 use im::{Vector, vector};
@@ -289,10 +290,11 @@ impl AppLogic for RealAppLogic<'_> {
     ) -> Result<UICommand, AppError> {
         match self.read(menu, terminal)? {
             ReadResult::Char('q') => Ok(UICommand::Quit),
-            ReadResult::Char('r') | ReadResult::Enter => match self.load(storage, true) {
+            ReadResult::Char('r') => match self.load(storage, true) {
                 Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
                 Err(e) => Ok(UICommand::DisplayError(e)),
             },
+            ReadResult::Char('w') => Ok(UICommand::DisplayWarnings(self.loaded.clone())),
             ReadResult::Char('e') => match self.edit(storage, terminal, editor) {
                 Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
                 Err(e) => Ok(UICommand::DisplayError(e)),
@@ -331,6 +333,7 @@ enum UICommand {
     Quit,
     Report(LoadedFile),
     UpdateMenu,
+    DisplayWarnings(LoadedFile),
     DisplayError(AppError),
 }
 
@@ -378,6 +381,9 @@ fn ui_impl(
             UICommand::UpdateMenu => {
                 display_menu(terminal, menu)?;
             }
+            UICommand::DisplayWarnings(loaded) => {
+                print_warnings(&loaded, terminal, menu)?;
+            }
             UICommand::DisplayError(error) => {
                 print_error(filename, error, terminal, menu)?;
             }
@@ -393,7 +399,8 @@ pub fn watch_and_report(filename: &str, dates: &dyn Fn() -> DateRange) -> Result
             "Append",
             "Add current date to the file."
         ),
-        MenuItem::new(ReadResult::Char('r'), "Reload", "Force reload of file."),
+        MenuItem::new(ReadResult::Char('r'), "Reload", "Reload file."),
+        MenuItem::new(ReadResult::Char('w'), "Warnings", "Display warnings."),
         MenuItem::new(ReadResult::Char('q'), "Quit", "Quit the program.")
     );
     let mut menu = Menu::new(menu_items.clone());
@@ -410,13 +417,14 @@ pub fn watch_and_report(filename: &str, dates: &dyn Fn() -> DateRange) -> Result
 
 fn display_menu(terminal: &dyn Terminal, menu: &Menu<ReadResult>) -> Result<(), AppError> {
     let (_, cols) = terminal.size()?;
+    let width = cols as usize;
     terminal.goto(0, 0)?;
+    terminal.println(format!("{:w$}\r", menu.render().as_str(), w = width).as_str());
     terminal.println(
         format!(
-            "{:width$}\r\n{:width$}\r",
-            menu.render().as_str(),
-            menu.description(),
-            width = cols as usize
+            "{:w$}\r",
+            menu.description().yellow().to_string(),
+            w = width
         )
         .as_str(),
     );
@@ -447,12 +455,35 @@ fn print_file(
     terminal.clear()?;
     display_menu(terminal, menu)?;
     terminal.goto(3, 0)?;
-    file.warnings
-        .iter()
-        .for_each(|w| terminal.println(format!("warning: {w}").as_str()));
+    if !file.warnings.is_empty() {
+        terminal.println(
+            format!("There are {} warnings.", file.warnings.len())
+                .red()
+                .to_string()
+                .as_str(),
+        );
+    }
     let lines = report::create_report(dates, &file.day_entries)?;
     for line in lines {
         terminal.println(line.as_str());
+    }
+    Ok(())
+}
+
+fn print_warnings(
+    file: &LoadedFile,
+    terminal: &dyn Terminal,
+    menu: &Menu<ReadResult>,
+) -> Result<(), AppError> {
+    terminal.clear()?;
+    display_menu(terminal, menu)?;
+    terminal.goto(3, 0)?;
+    if file.warnings.is_empty() {
+        terminal.println("There are no warnings to display.");
+    } else {
+        file.warnings
+            .iter()
+            .for_each(|w| terminal.println(format!("warning: {w}").as_str()));
     }
     Ok(())
 }
