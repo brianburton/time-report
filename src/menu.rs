@@ -51,8 +51,14 @@ impl<T: Clone + Copy> Menu<T> {
         }
     }
 
-    pub fn find_item(&self, c: char) -> Option<T> {
-        self.items.iter().find(|i| i.key == c).map(|i| i.value)
+    pub fn select(&mut self, c: char) -> Option<T> {
+        for (index, item) in self.items.iter().enumerate() {
+            if item.key == c {
+                self.selected_index = index;
+                return Some(item.value);
+            }
+        }
+        None
     }
 
     pub fn render(&self) -> String {
