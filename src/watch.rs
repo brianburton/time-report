@@ -463,9 +463,25 @@ fn print_error(
     terminal.clear()?;
     display_menu(terminal, menu)?;
     terminal.goto(3, 0)?;
-    terminal.println(format!("error: filename={} {}", filename, error).as_str())?;
-    terminal.println("")?;
-    terminal.println("Press r or ENTER to continue...")
+    terminal.println("error:".red().to_string().as_str())?;
+    terminal.println(
+        format!("   filename: {}", filename)
+            .red()
+            .to_string()
+            .as_str(),
+    )?;
+    terminal.println(
+        format!("    context: {}", error.context())
+            .red()
+            .to_string()
+            .as_str(),
+    )?;
+    terminal.println(
+        format!("     detail: {}", error.detail())
+            .red()
+            .to_string()
+            .as_str(),
+    )
 }
 
 fn print_file(
