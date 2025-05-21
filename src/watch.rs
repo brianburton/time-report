@@ -117,7 +117,7 @@ impl Writer {
 
 struct RealTerminal {}
 impl RealTerminal {
-    fn print<T: Display>(&self, s: style::Print<T>) -> Result<(), AppError> {
+    fn print<T: Display>(&self, s: T) -> Result<(), AppError> {
         Writer::new("RealTerminal.println")
             .enqueue("Clear", terminal::Clear(terminal::ClearType::CurrentLine))
             .enqueue("Print", style::Print(s))
@@ -168,15 +168,15 @@ impl Terminal for RealTerminal {
     }
 
     fn print_str(&self, s: &str) -> Result<(), AppError> {
-        self.print(style::Print(s))
+        self.print(s)
     }
 
     fn print_styled_str(&self, s: StyledContent<&str>) -> Result<(), AppError> {
-        self.print(style::Print(s))
+        self.print(s)
     }
 
     fn print_styled_string(&self, s: StyledContent<String>) -> Result<(), AppError> {
-        self.print(style::Print(s))
+        self.print(s)
     }
 
     fn goto(&self, row: u16, col: u16) -> Result<(), AppError> {
