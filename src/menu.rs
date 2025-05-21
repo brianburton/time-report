@@ -1,6 +1,5 @@
 use crossterm::style::Stylize;
 use im::Vector;
-use itertools::Itertools;
 
 #[derive(Clone)]
 pub struct MenuItem<T: Clone + Copy> {

@@ -10,14 +10,10 @@ mod report;
 mod watch;
 
 use core::AppError;
-use crossterm::style::Stylize;
-use im::{Vector, vector};
-use itertools::Itertools;
-use menu::{Menu, MenuItem};
+use im::Vector;
 use model::{Date, DateRange, DayEntry};
 use std::env;
 use std::env::Args;
-use std::process::exit;
 
 fn command_append(args: &mut Args) -> Result<(), AppError> {
     let (filename, all_day_entries) = load_file(args)?;
@@ -100,31 +96,7 @@ fn load_dates(args: &mut Args) -> Result<Box<dyn Fn() -> DateRange>, AppError> {
     Ok(dates_fn)
 }
 
-#[derive(Copy, Clone)]
-enum MenuValue {
-    Append,
-    Reload,
-    Quit,
-}
-
 fn main() -> Result<(), AppError> {
-    // let menu_items = vector!(
-    //     MenuItem::new(MenuValue::Append, "Append", "Add current date to the file."),
-    //     MenuItem::new(MenuValue::Reload, "Reload", "Force reload of file."),
-    //     MenuItem::new(MenuValue::Quit, "Quit", "Quit the program.")
-    // );
-    // let mut menu = Menu::new(menu_items.clone());
-    // for _ in &menu_items {
-    //     println!("{}", menu.render());
-    //     println!("{}", menu.description().dark_yellow());
-    //     menu.right();
-    // }
-    // for _ in &menu_items {
-    //     menu.left();
-    //     println!("{}", menu.render());
-    //     println!("{}", menu.description().dark_yellow());
-    // }
-    // exit(1);
     let mut args = env::args();
     let command = args
         .nth(1)
