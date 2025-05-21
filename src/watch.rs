@@ -6,7 +6,7 @@ use crate::{append, parse};
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::KeyCode;
 use crossterm::event::{Event, poll, read};
-use crossterm::style::Stylize;
+use crossterm::style::{StyledContent, Stylize};
 use crossterm::{QueueableCommand, cursor, execute, style, terminal};
 use derive_getters::Getters;
 use im::{Vector, vector};
@@ -33,7 +33,9 @@ trait Terminal {
     fn stop(&self) -> Result<(), AppError>;
     fn read(&self, timeout: Duration) -> Result<ReadResult, AppError>;
     fn clear(&self) -> Result<(), AppError>;
-    fn println(&self, s: &str) -> Result<(), AppError>;
+    fn print_str(&self, s: &str) -> Result<(), AppError>;
+    fn print_styled_str(&self, s: StyledContent<&str>) -> Result<(), AppError>;
+    fn print_styled_string(&self, s: StyledContent<String>) -> Result<(), AppError>;
     fn goto(&self, row: u16, col: u16) -> Result<(), AppError>;
 }
 
@@ -141,8 +143,26 @@ impl Terminal for RealTerminal {
             .write()
     }
 
-    fn println(&self, s: &str) -> Result<(), AppError> {
+    fn print_str(&self, s: &str) -> Result<(), AppError> {
         Writer::new("RealTerminal.println")
+            .enqueue("Clear", terminal::Clear(terminal::ClearType::CurrentLine))
+            .enqueue("Print", style::Print(s))
+            .enqueue("MoveDown", cursor::MoveDown(1))
+            .enqueue("MoveToColumn", cursor::MoveToColumn(0))
+            .write()
+    }
+
+    fn print_styled_str(&self, s: StyledContent<&str>) -> Result<(), AppError> {
+        Writer::new("RealTerminal.print_styled_str")
+            .enqueue("Clear", terminal::Clear(terminal::ClearType::CurrentLine))
+            .enqueue("Print", style::Print(s))
+            .enqueue("MoveDown", cursor::MoveDown(1))
+            .enqueue("MoveToColumn", cursor::MoveToColumn(0))
+            .write()
+    }
+
+    fn print_styled_string(&self, s: StyledContent<String>) -> Result<(), AppError> {
+        Writer::new("RealTerminal.print_styled_string")
             .enqueue("Clear", terminal::Clear(terminal::ClearType::CurrentLine))
             .enqueue("Print", style::Print(s))
             .enqueue("MoveDown", cursor::MoveDown(1))
@@ -450,8 +470,8 @@ fn create_menu() -> Menu<ReadResult> {
 
 fn display_menu(terminal: &dyn Terminal, menu: &Menu<ReadResult>) -> Result<(), AppError> {
     terminal.goto(0, 0)?;
-    terminal.println(menu.render().as_str())?;
-    terminal.println(menu.description().yellow().to_string().as_str())
+    terminal.print_str(menu.render().as_str())?;
+    terminal.print_styled_str(menu.description().yellow())
 }
 
 fn print_error(
@@ -463,25 +483,10 @@ fn print_error(
     terminal.clear()?;
     display_menu(terminal, menu)?;
     terminal.goto(3, 0)?;
-    terminal.println("error:".red().to_string().as_str())?;
-    terminal.println(
-        format!("   filename: {}", filename)
-            .red()
-            .to_string()
-            .as_str(),
-    )?;
-    terminal.println(
-        format!("    context: {}", error.context())
-            .red()
-            .to_string()
-            .as_str(),
-    )?;
-    terminal.println(
-        format!("     detail: {}", error.detail())
-            .red()
-            .to_string()
-            .as_str(),
-    )
+    terminal.print_styled_str("error:".red())?;
+    terminal.print_styled_string(format!("   filename: {}", filename).red())?;
+    terminal.print_styled_string(format!("    context: {}", error.context()).red())?;
+    terminal.print_styled_string(format!("     detail: {}", error.detail()).red())
 }
 
 fn print_file(
@@ -493,17 +498,23 @@ fn print_file(
     terminal.clear()?;
     display_menu(terminal, menu)?;
     terminal.goto(3, 0)?;
-    if !file.warnings.is_empty() {
-        terminal.println(
-            format!("There are {} warnings.", file.warnings.len())
-                .red()
-                .to_string()
-                .as_str(),
-        )?;
+    match file.warnings.len() {
+        0 => (),
+        1 => {
+            terminal
+                .print_styled_string(format!("warning: {}", file.warnings[0].as_str()).red())?;
+            terminal.print_str("")?;
+        }
+        _ => {
+            terminal.print_styled_string(
+                format!("There are {} warnings.", file.warnings.len()).red(),
+            )?;
+            terminal.print_str("")?;
+        }
     }
     let lines = report::create_report(dates, &file.day_entries)?;
     for line in lines {
-        terminal.println(line.as_str())?;
+        terminal.print_str(line.as_str())?;
     }
     Ok(())
 }
@@ -517,10 +528,10 @@ fn print_warnings(
     display_menu(terminal, menu)?;
     terminal.goto(3, 0)?;
     if file.warnings.is_empty() {
-        terminal.println("There are no warnings to display.")?;
+        terminal.print_str("There are no warnings to display.")?;
     } else {
         for warning in &file.warnings {
-            terminal.println(warning.as_str())?;
+            terminal.print_styled_string(format!("warning: {}", warning.as_str()).red())?;
         }
     }
     Ok(())
