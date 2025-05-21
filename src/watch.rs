@@ -19,10 +19,22 @@ use std::io::{Stdout, Write, stdout};
 use std::process::Command;
 use std::time::{Duration, SystemTime, SystemTimeError};
 
-#[derive(Copy, Clone)]
-enum ReadResult {
+enum RawReadResult {
     Char(char),
     Enter,
+    Left,
+    Right,
+    Resized,
+    Timeout,
+}
+
+#[derive(Copy, Clone)]
+enum ReadResult {
+    Append,
+    Edit,
+    Reload,
+    Warnings,
+    Quit,
     Left,
     Right,
     Resized,
@@ -32,7 +44,7 @@ enum ReadResult {
 trait Terminal {
     fn start(&self) -> Result<(), AppError>;
     fn stop(&self) -> Result<(), AppError>;
-    fn read(&self, timeout: Duration) -> Result<ReadResult, AppError>;
+    fn read(&self, timeout: Duration) -> Result<RawReadResult, AppError>;
     fn clear(&self) -> Result<(), AppError>;
     fn print_str(&self, s: &str) -> Result<(), AppError>;
     fn print_styled_str(&self, s: StyledContent<&str>) -> Result<(), AppError>;
@@ -129,23 +141,23 @@ impl Terminal for RealTerminal {
         Ok(())
     }
 
-    fn read(&self, timeout: Duration) -> Result<ReadResult, AppError> {
+    fn read(&self, timeout: Duration) -> Result<RawReadResult, AppError> {
         let io_err =
             |detail: &str, e: std::io::Error| AppError::from_error("RealTerminal.read", detail, e);
         while poll(timeout).map_err(|e| io_err("poll", e))? {
             match read().map_err(|e| io_err("read", e))? {
                 Event::Key(event) => match event.code {
-                    KeyCode::Char(c) => return Ok(ReadResult::Char(c)),
-                    KeyCode::Enter => return Ok(ReadResult::Enter),
-                    KeyCode::Left => return Ok(ReadResult::Left),
-                    KeyCode::Right => return Ok(ReadResult::Right),
+                    KeyCode::Char(c) => return Ok(RawReadResult::Char(c)),
+                    KeyCode::Enter => return Ok(RawReadResult::Enter),
+                    KeyCode::Left => return Ok(RawReadResult::Left),
+                    KeyCode::Right => return Ok(RawReadResult::Right),
                     _ => {}
                 },
-                Event::Resize(_, _) => return Ok(ReadResult::Resized),
+                Event::Resize(_, _) => return Ok(RawReadResult::Resized),
                 _ => {}
             }
         }
-        Ok(ReadResult::Timeout)
+        Ok(RawReadResult::Timeout)
     }
 
     fn clear(&self) -> Result<(), AppError> {
@@ -310,17 +322,15 @@ impl<'a> RealAppLogic<'a> {
     ) -> Result<ReadResult, AppError> {
         loop {
             match terminal.read(self.read_timeout)? {
-                ReadResult::Char(c) => {
-                    if let Some(x) = menu.select(c) {
-                        return Ok(x);
-                    } else {
-                        continue;
-                    }
-                }
-                ReadResult::Enter => return Ok(ReadResult::Char(menu.key())),
-                rr => {
-                    return Ok(rr);
-                }
+                RawReadResult::Char(c) => match menu.select(c) {
+                    Some(x) => return Ok(x),
+                    None => continue,
+                },
+                RawReadResult::Enter => return Ok(menu.value()),
+                RawReadResult::Left => return Ok(ReadResult::Left),
+                RawReadResult::Right => return Ok(ReadResult::Right),
+                RawReadResult::Timeout => return Ok(ReadResult::Timeout),
+                RawReadResult::Resized => return Ok(ReadResult::Resized),
             }
         }
     }
@@ -335,17 +345,17 @@ impl AppLogic for RealAppLogic<'_> {
         editor: &mut dyn Editor,
     ) -> Result<UICommand, AppError> {
         match self.read(menu, terminal)? {
-            ReadResult::Char('q') => Ok(UICommand::Quit),
-            ReadResult::Char('r') => match self.load(storage, true) {
+            ReadResult::Quit => Ok(UICommand::Quit),
+            ReadResult::Reload => match self.load(storage, true) {
                 Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
                 Err(e) => Ok(UICommand::DisplayError(e)),
             },
-            ReadResult::Char('w') => Ok(UICommand::DisplayWarnings(self.loaded.clone())),
-            ReadResult::Char('e') => match self.edit(storage, terminal, editor) {
+            ReadResult::Warnings => Ok(UICommand::DisplayWarnings(self.loaded.clone())),
+            ReadResult::Edit => match self.edit(storage, terminal, editor) {
                 Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
                 Err(e) => Ok(UICommand::DisplayError(e)),
             },
-            ReadResult::Char('a') => match self.append(storage) {
+            ReadResult::Append => match self.append(storage) {
                 Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
                 Err(e) => Ok(UICommand::DisplayError(e)),
             },
@@ -363,7 +373,6 @@ impl AppLogic for RealAppLogic<'_> {
                 Ok((false, _)) => Ok(UICommand::DoNothing),
                 Err(e) => Ok(UICommand::DisplayError(e)),
             },
-            _ => Ok(UICommand::DoNothing),
         }
     }
 }
@@ -452,15 +461,15 @@ pub fn watch_and_report(filename: &str, dates: &dyn Fn() -> DateRange) -> Result
 
 fn create_menu() -> Menu<ReadResult> {
     let menu_items = vector!(
-        MenuItem::new(ReadResult::Char('e'), "Edit", "Edit the file."),
+        MenuItem::new(ReadResult::Edit, "Edit", "Edit the file."),
         MenuItem::new(
-            ReadResult::Char('a'),
+            ReadResult::Append,
             "Append",
             "Add current date to the file."
         ),
-        MenuItem::new(ReadResult::Char('r'), "Reload", "Reload file."),
-        MenuItem::new(ReadResult::Char('w'), "Warnings", "Display warnings."),
-        MenuItem::new(ReadResult::Char('q'), "Quit", "Quit the program.")
+        MenuItem::new(ReadResult::Reload, "Reload", "Reload file."),
+        MenuItem::new(ReadResult::Warnings, "Warnings", "Display warnings."),
+        MenuItem::new(ReadResult::Quit, "Quit", "Quit the program.")
     );
     Menu::new(menu_items.clone())
 }

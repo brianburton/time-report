@@ -90,8 +90,8 @@ impl<T: Clone + Copy> Menu<T> {
         self.items[self.selected_index].description.as_str()
     }
 
-    pub fn key(&self) -> char {
-        self.items[self.selected_index].key
+    pub fn value(&self) -> T {
+        self.items[self.selected_index].value
     }
 }
 
