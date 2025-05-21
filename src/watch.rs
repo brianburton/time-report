@@ -13,6 +13,7 @@ use im::{Vector, vector};
 use regex::Regex;
 use scopeguard::defer;
 use std::env;
+use std::fmt::Display;
 use std::fs;
 use std::io::{Stdout, Write, stdout};
 use std::process::Command;
@@ -103,6 +104,17 @@ impl Writer {
 }
 
 struct RealTerminal {}
+impl RealTerminal {
+    fn print<T: Display>(&self, s: style::Print<T>) -> Result<(), AppError> {
+        Writer::new("RealTerminal.println")
+            .enqueue("Clear", terminal::Clear(terminal::ClearType::CurrentLine))
+            .enqueue("Print", style::Print(s))
+            .enqueue("MoveDown", cursor::MoveDown(1))
+            .enqueue("MoveToColumn", cursor::MoveToColumn(0))
+            .write()
+    }
+}
+
 impl Terminal for RealTerminal {
     fn start(&self) -> Result<(), AppError> {
         let io_err = |detail: &str, e: std::io::Error| AppError::from_error("init_term", detail, e);
@@ -144,30 +156,15 @@ impl Terminal for RealTerminal {
     }
 
     fn print_str(&self, s: &str) -> Result<(), AppError> {
-        Writer::new("RealTerminal.println")
-            .enqueue("Clear", terminal::Clear(terminal::ClearType::CurrentLine))
-            .enqueue("Print", style::Print(s))
-            .enqueue("MoveDown", cursor::MoveDown(1))
-            .enqueue("MoveToColumn", cursor::MoveToColumn(0))
-            .write()
+        self.print(style::Print(s))
     }
 
     fn print_styled_str(&self, s: StyledContent<&str>) -> Result<(), AppError> {
-        Writer::new("RealTerminal.print_styled_str")
-            .enqueue("Clear", terminal::Clear(terminal::ClearType::CurrentLine))
-            .enqueue("Print", style::Print(s))
-            .enqueue("MoveDown", cursor::MoveDown(1))
-            .enqueue("MoveToColumn", cursor::MoveToColumn(0))
-            .write()
+        self.print(style::Print(s))
     }
 
     fn print_styled_string(&self, s: StyledContent<String>) -> Result<(), AppError> {
-        Writer::new("RealTerminal.print_styled_string")
-            .enqueue("Clear", terminal::Clear(terminal::ClearType::CurrentLine))
-            .enqueue("Print", style::Print(s))
-            .enqueue("MoveDown", cursor::MoveDown(1))
-            .enqueue("MoveToColumn", cursor::MoveToColumn(0))
-            .write()
+        self.print(style::Print(s))
     }
 
     fn goto(&self, row: u16, col: u16) -> Result<(), AppError> {
