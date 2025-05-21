@@ -7,7 +7,7 @@ use crossterm::cursor::{Hide, Show};
 use crossterm::event::KeyCode;
 use crossterm::event::{Event, poll, read};
 use crossterm::style::Stylize;
-use crossterm::{QueueableCommand, cursor, execute, terminal};
+use crossterm::{QueueableCommand, cursor, execute, style, terminal};
 use derive_getters::Getters;
 use im::{Vector, vector};
 use regex::Regex;
@@ -33,7 +33,7 @@ trait Terminal {
     fn stop(&self) -> Result<(), AppError>;
     fn read(&self, timeout: Duration) -> Result<ReadResult, AppError>;
     fn clear(&self) -> Result<(), AppError>;
-    fn println(&self, s: &str);
+    fn println(&self, s: &str) -> Result<(), AppError>;
     fn size(&self) -> Result<(u16, u16), AppError>;
     fn goto(&self, row: u16, col: u16) -> Result<(), AppError>;
 }
@@ -109,8 +109,20 @@ impl Terminal for RealTerminal {
         Ok(())
     }
 
-    fn println(&self, s: &str) {
-        println!("{}\r", s);
+    fn println(&self, s: &str) -> Result<(), AppError> {
+        let io_err = |detail: &str, e: std::io::Error| {
+            AppError::from_error("RealTerminal.println", detail, e)
+        };
+        let mut out = stdout();
+        out.queue(terminal::Clear(terminal::ClearType::CurrentLine))
+            .map_err(|e| io_err("queue.Clear", e))?;
+        out.queue(style::Print(s))
+            .map_err(|e| io_err("queue.Print", e))?;
+        out.queue(cursor::MoveDown(1))
+            .map_err(|e| io_err("queue.MoveDown", e))?;
+        out.queue(cursor::MoveToColumn(0))
+            .map_err(|e| io_err("queue.MoveToColumn", e))?;
+        out.flush().map_err(|e| io_err("queue.Clear", e))
     }
 
     fn size(&self) -> Result<(u16, u16), AppError> {
@@ -392,18 +404,7 @@ fn ui_impl(
 }
 
 pub fn watch_and_report(filename: &str, dates: &dyn Fn() -> DateRange) -> Result<(), AppError> {
-    let menu_items = vector!(
-        MenuItem::new(ReadResult::Char('e'), "Edit", "Edit the file."),
-        MenuItem::new(
-            ReadResult::Char('a'),
-            "Append",
-            "Add current date to the file."
-        ),
-        MenuItem::new(ReadResult::Char('r'), "Reload", "Reload file."),
-        MenuItem::new(ReadResult::Char('w'), "Warnings", "Display warnings."),
-        MenuItem::new(ReadResult::Char('q'), "Quit", "Quit the program.")
-    );
-    let mut menu = Menu::new(menu_items.clone());
+    let mut menu = create_menu();
     ui_impl(
         filename,
         dates,
@@ -415,19 +416,25 @@ pub fn watch_and_report(filename: &str, dates: &dyn Fn() -> DateRange) -> Result
     )
 }
 
-fn display_menu(terminal: &dyn Terminal, menu: &Menu<ReadResult>) -> Result<(), AppError> {
-    let (_, cols) = terminal.size()?;
-    let width = cols as usize;
-    terminal.goto(0, 0)?;
-    terminal.println(format!("{:w$}\r", menu.render().as_str(), w = width).as_str());
-    terminal.println(
-        format!(
-            "{:w$}\r",
-            menu.description().yellow().to_string(),
-            w = width
-        )
-        .as_str(),
+fn create_menu() -> Menu<ReadResult> {
+    let menu_items = vector!(
+        MenuItem::new(ReadResult::Char('e'), "Edit", "Edit the file."),
+        MenuItem::new(
+            ReadResult::Char('a'),
+            "Append",
+            "Add current date to the file."
+        ),
+        MenuItem::new(ReadResult::Char('r'), "Reload", "Reload file."),
+        MenuItem::new(ReadResult::Char('w'), "Warnings", "Display warnings."),
+        MenuItem::new(ReadResult::Char('q'), "Quit", "Quit the program.")
     );
+    Menu::new(menu_items.clone())
+}
+
+fn display_menu(terminal: &dyn Terminal, menu: &Menu<ReadResult>) -> Result<(), AppError> {
+    terminal.goto(0, 0)?;
+    terminal.println(menu.render().as_str());
+    terminal.println(menu.description().yellow().to_string().as_str());
     Ok(())
 }
 
@@ -440,7 +447,7 @@ fn print_error(
     terminal.clear()?;
     display_menu(terminal, menu)?;
     terminal.goto(3, 0)?;
-    terminal.println(format!("error reading file: filename={} error={}", filename, error).as_str());
+    terminal.println(format!("error: filename={} {}", filename, error).as_str());
     terminal.println("");
     terminal.println("Press r or ENTER to continue...");
     Ok(())
@@ -479,11 +486,11 @@ fn print_warnings(
     display_menu(terminal, menu)?;
     terminal.goto(3, 0)?;
     if file.warnings.is_empty() {
-        terminal.println("There are no warnings to display.");
+        terminal.println("There are no warnings to display.")?;
     } else {
-        file.warnings
-            .iter()
-            .for_each(|w| terminal.println(format!("warning: {w}").as_str()));
+        for warning in &file.warnings {
+            terminal.println(warning.as_str())?;
+        }
     }
     Ok(())
 }
