@@ -34,7 +34,6 @@ trait Terminal {
     fn read(&self, timeout: Duration) -> Result<ReadResult, AppError>;
     fn clear(&self) -> Result<(), AppError>;
     fn println(&self, s: &str) -> Result<(), AppError>;
-    fn size(&self) -> Result<(u16, u16), AppError>;
     fn goto(&self, row: u16, col: u16) -> Result<(), AppError>;
 }
 
@@ -97,7 +96,7 @@ impl Writer {
                 .err()
                 .map(|e| AppError::from_error(self.context.as_str(), "flush", e));
         }
-        self.result.take().map(|e| Err(e)).unwrap_or(Ok(()))
+        self.result.take().map(Err).unwrap_or(Ok(()))
     }
 }
 
@@ -149,10 +148,6 @@ impl Terminal for RealTerminal {
             .enqueue("MoveDown", cursor::MoveDown(1))
             .enqueue("MoveToColumn", cursor::MoveToColumn(0))
             .write()
-    }
-
-    fn size(&self) -> Result<(u16, u16), AppError> {
-        terminal::size().map_err(|e| AppError::from_error("RealTerminal.size", "size", e))
     }
 
     fn goto(&self, row: u16, col: u16) -> Result<(), AppError> {
