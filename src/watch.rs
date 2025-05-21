@@ -447,11 +447,10 @@ fn ui_impl(
 }
 
 pub fn watch_and_report(filename: &str, dates: &dyn Fn() -> DateRange) -> Result<(), AppError> {
-    let mut menu = create_menu();
     ui_impl(
         filename,
         dates,
-        &mut menu,
+        &mut create_menu()?,
         &RealTerminal {},
         &mut RealEditor {},
         &mut RealStorage {},
@@ -459,7 +458,7 @@ pub fn watch_and_report(filename: &str, dates: &dyn Fn() -> DateRange) -> Result
     )
 }
 
-fn create_menu() -> Menu<ReadResult> {
+fn create_menu() -> Result<Menu<ReadResult>, AppError> {
     let menu_items = vector!(
         MenuItem::new(ReadResult::Edit, "Edit", "Edit the file."),
         MenuItem::new(
@@ -471,7 +470,7 @@ fn create_menu() -> Menu<ReadResult> {
         MenuItem::new(ReadResult::Warnings, "Warnings", "Display warnings."),
         MenuItem::new(ReadResult::Quit, "Quit", "Quit the program.")
     );
-    Menu::new(menu_items.clone())
+    Menu::new(menu_items)
 }
 
 fn display_menu(terminal: &dyn Terminal, menu: &Menu<ReadResult>) -> Result<(), AppError> {

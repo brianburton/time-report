@@ -1,3 +1,4 @@
+use crate::core::AppError;
 use crossterm::style::Stylize;
 use im::Vector;
 
@@ -43,10 +44,14 @@ pub struct Menu<T: Clone + Copy> {
 }
 
 impl<T: Clone + Copy> Menu<T> {
-    pub fn new(items: Vector<MenuItem<T>>) -> Menu<T> {
-        Menu {
-            items,
-            selected_index: 0,
+    pub fn new(items: Vector<MenuItem<T>>) -> Result<Menu<T>, AppError> {
+        if items.is_empty() {
+            Err(AppError::from_str("Menu", "No menu items found"))
+        } else {
+            Ok(Menu {
+                items,
+                selected_index: 0,
+            })
         }
     }
 
@@ -130,7 +135,7 @@ mod tests {
             MenuItem::new(MenuValue::Reload, "Reload", "Force reload of file."),
             MenuItem::new(MenuValue::Quit, "Quit", "Quit the program.")
         );
-        let mut menu = Menu::new(menu_items.clone());
+        let mut menu = Menu::new(menu_items.clone()).unwrap();
         for i in 0..menu_items.len() {
             assert_eq!(menu.selected_index, i);
             assert_eq!(
