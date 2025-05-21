@@ -14,7 +14,7 @@ use regex::Regex;
 use scopeguard::defer;
 use std::env;
 use std::fs;
-use std::io::{Write, stdout};
+use std::io::{Stdout, Write, stdout};
 use std::process::Command;
 use std::time::{Duration, SystemTime, SystemTimeError};
 
@@ -63,6 +63,44 @@ trait Editor {
     fn edit_file(&self, filename: &str, line_number: u32) -> Result<(), AppError>;
 }
 
+struct Writer {
+    context: String,
+    stdout: Stdout,
+    result: Option<AppError>,
+}
+
+impl Writer {
+    fn new(context: &str) -> Self {
+        Writer {
+            context: context.to_string(),
+            stdout: stdout(),
+            result: None,
+        }
+    }
+
+    fn enqueue<T: crossterm::Command>(&mut self, error_message: &str, command: T) -> &mut Self {
+        if self.result.is_none() {
+            self.result = self
+                .stdout
+                .queue(command)
+                .err()
+                .map(|e| AppError::from_error(self.context.as_str(), error_message, e));
+        }
+        self
+    }
+
+    fn write(&mut self) -> Result<(), AppError> {
+        if self.result.is_none() {
+            self.result = self
+                .stdout
+                .flush()
+                .err()
+                .map(|e| AppError::from_error(self.context.as_str(), "flush", e));
+        }
+        self.result.take().map(|e| Err(e)).unwrap_or(Ok(()))
+    }
+}
+
 struct RealTerminal {}
 impl Terminal for RealTerminal {
     fn start(&self) -> Result<(), AppError> {
@@ -98,31 +136,19 @@ impl Terminal for RealTerminal {
     }
 
     fn clear(&self) -> Result<(), AppError> {
-        let io_err =
-            |detail: &str, e: std::io::Error| AppError::from_error("RealTerminal.clear", detail, e);
-        let mut out = stdout();
-        out.queue(terminal::Clear(terminal::ClearType::All))
-            .map_err(|e| io_err("queue.Clear", e))?;
-        out.queue(cursor::MoveTo(0, 0))
-            .map_err(|e| io_err("queue.MoveTo", e))?;
-        out.flush().map_err(|e| io_err("flush", e))?;
-        Ok(())
+        Writer::new("RealTerminal.clear")
+            .enqueue("Clear", terminal::Clear(terminal::ClearType::All))
+            .enqueue("MoveTo", cursor::MoveTo(0, 0))
+            .write()
     }
 
     fn println(&self, s: &str) -> Result<(), AppError> {
-        let io_err = |detail: &str, e: std::io::Error| {
-            AppError::from_error("RealTerminal.println", detail, e)
-        };
-        let mut out = stdout();
-        out.queue(terminal::Clear(terminal::ClearType::CurrentLine))
-            .map_err(|e| io_err("queue.Clear", e))?;
-        out.queue(style::Print(s))
-            .map_err(|e| io_err("queue.Print", e))?;
-        out.queue(cursor::MoveDown(1))
-            .map_err(|e| io_err("queue.MoveDown", e))?;
-        out.queue(cursor::MoveToColumn(0))
-            .map_err(|e| io_err("queue.MoveToColumn", e))?;
-        out.flush().map_err(|e| io_err("queue.Clear", e))
+        Writer::new("RealTerminal.println")
+            .enqueue("Clear", terminal::Clear(terminal::ClearType::CurrentLine))
+            .enqueue("Print", style::Print(s))
+            .enqueue("MoveDown", cursor::MoveDown(1))
+            .enqueue("MoveToColumn", cursor::MoveToColumn(0))
+            .write()
     }
 
     fn size(&self) -> Result<(u16, u16), AppError> {
@@ -130,13 +156,9 @@ impl Terminal for RealTerminal {
     }
 
     fn goto(&self, row: u16, col: u16) -> Result<(), AppError> {
-        let io_err =
-            |detail: &str, e: std::io::Error| AppError::from_error("RealTerminal.goto", detail, e);
-        let mut out = stdout();
-        out.queue(cursor::MoveTo(col, row))
-            .map_err(|e| io_err("queue.MoveTo", e))?;
-        out.flush().map_err(|e| io_err("flush", e))?;
-        Ok(())
+        Writer::new("RealTerminal.goto")
+            .enqueue("MoveTo", cursor::MoveTo(col, row))
+            .write()
     }
 }
 
@@ -433,9 +455,8 @@ fn create_menu() -> Menu<ReadResult> {
 
 fn display_menu(terminal: &dyn Terminal, menu: &Menu<ReadResult>) -> Result<(), AppError> {
     terminal.goto(0, 0)?;
-    terminal.println(menu.render().as_str());
-    terminal.println(menu.description().yellow().to_string().as_str());
-    Ok(())
+    terminal.println(menu.render().as_str())?;
+    terminal.println(menu.description().yellow().to_string().as_str())
 }
 
 fn print_error(
@@ -447,10 +468,9 @@ fn print_error(
     terminal.clear()?;
     display_menu(terminal, menu)?;
     terminal.goto(3, 0)?;
-    terminal.println(format!("error: filename={} {}", filename, error).as_str());
-    terminal.println("");
-    terminal.println("Press r or ENTER to continue...");
-    Ok(())
+    terminal.println(format!("error: filename={} {}", filename, error).as_str())?;
+    terminal.println("")?;
+    terminal.println("Press r or ENTER to continue...")
 }
 
 fn print_file(
@@ -468,11 +488,11 @@ fn print_file(
                 .red()
                 .to_string()
                 .as_str(),
-        );
+        )?;
     }
     let lines = report::create_report(dates, &file.day_entries)?;
     for line in lines {
-        terminal.println(line.as_str());
+        terminal.println(line.as_str())?;
     }
     Ok(())
 }
