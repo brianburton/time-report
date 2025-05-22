@@ -21,20 +21,19 @@ impl<T: Clone + Copy> MenuItem<T> {
         }
     }
 
-    fn render(&self, selected: bool) -> String {
+    fn render(&self, first: bool, selected: bool) -> String {
+        let mut text = format!(
+            "{}({}){} ",
+            if first { "" } else { " " },
+            self.name.get(..1).unwrap(),
+            self.name.get(1..).unwrap_or("")
+        );
         if selected {
-            format!(
-                "{}{}",
-                self.name.get(..1).unwrap().yellow().bold(),
-                self.name.get(1..).unwrap_or("").dark_yellow()
-            )
+            text = text.dark_red().to_string();
         } else {
-            format!(
-                "{}{}",
-                self.name.get(..1).unwrap().cyan().bold(),
-                self.name.get(1..).unwrap_or("").dark_blue()
-            )
+            text = text.dark_blue().to_string();
         }
+        text
     }
 }
 
@@ -71,7 +70,7 @@ impl<T: Clone + Copy> Menu<T> {
             if i > 0 {
                 text += "    ";
             }
-            text += item.render(i == self.selected_index).as_ref();
+            text += item.render(i == 0, i == self.selected_index).as_ref();
         }
         text
     }
@@ -118,13 +117,10 @@ mod tests {
         assert_eq!(item.name, "Append");
         assert_eq!(item.description, "Add current date to the file.");
         assert_eq!(item.key, 'a');
+        assert_eq!(item.render(true, true), "(A)ppend ".dark_red().to_string());
         assert_eq!(
-            item.render(true),
-            format!("{}{}", "A".yellow().bold(), "ppend".dark_yellow()),
-        );
-        assert_eq!(
-            item.render(false),
-            format!("{}{}", "A".cyan().bold(), "ppend".dark_blue()),
+            item.render(false, false),
+            " (A)ppend ".dark_blue().to_string(),
         );
     }
 
@@ -142,9 +138,9 @@ mod tests {
                 menu.render(),
                 format!(
                     "{}    {}    {}",
-                    menu_items[0].render(menu.selected_index == 0),
-                    menu_items[1].render(menu.selected_index == 1),
-                    menu_items[2].render(menu.selected_index == 2)
+                    menu_items[0].render(true, menu.selected_index == 0),
+                    menu_items[1].render(false, menu.selected_index == 1),
+                    menu_items[2].render(false, menu.selected_index == 2)
                 )
             );
             menu.right();
