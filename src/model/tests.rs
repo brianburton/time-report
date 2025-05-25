@@ -34,16 +34,16 @@ fn test_time() {
 
 #[test]
 fn test_date_time_valid() {
-    assert_eq!(true, is_valid_time(0, 0));
-    assert_eq!(true, is_valid_time(23, 59));
-    assert_eq!(false, is_valid_time(24, 0));
-    assert_eq!(false, is_valid_time(0, 60));
-    assert_eq!(true, is_valid_date(MIN_YEAR, 1, 1));
-    assert_eq!(true, is_valid_date(MAX_YEAR, 12, 31));
-    assert_eq!(false, is_valid_date(MIN_YEAR - 1, 12, 31));
-    assert_eq!(false, is_valid_date(MAX_YEAR + 1, 1, 1));
-    assert_eq!(false, is_valid_date(MAX_YEAR, 13, 1));
-    assert_eq!(false, is_valid_date(MAX_YEAR, 1, 32));
+    assert!(is_valid_time(0, 0));
+    assert!(is_valid_time(23, 59));
+    assert!(!is_valid_time(24, 0));
+    assert!(!is_valid_time(0, 60));
+    assert!(is_valid_date(MIN_YEAR, 1, 1));
+    assert!(is_valid_date(MAX_YEAR, 12, 31));
+    assert!(!is_valid_date(MIN_YEAR - 1, 12, 31));
+    assert!(!is_valid_date(MAX_YEAR + 1, 1, 1));
+    assert!(!is_valid_date(MAX_YEAR, 13, 1));
+    assert!(!is_valid_date(MAX_YEAR, 1, 32));
 }
 
 #[test]
@@ -170,21 +170,18 @@ fn test_find_overlapping_time_ranges() {
     let no_match: OrdSet<TimeRange> = ordset!();
 
     assert_eq!(no_match, find_overlapping_time_ranges(&empty));
+    assert_eq!(no_match, find_overlapping_time_ranges(&vector!(t13, t35)));
     assert_eq!(
-        no_match,
-        find_overlapping_time_ranges(&vector!(t13.clone(), t35.clone()))
-    );
-    assert_eq!(
-        ordset!(t13.clone(), t35.clone(), t24.clone()),
-        find_overlapping_time_ranges(&vector!(t13.clone(), t35.clone(), t24.clone()))
+        ordset!(t13, t35, t24),
+        find_overlapping_time_ranges(&vector!(t13, t35, t24))
     );
     assert_eq!(
         no_match,
-        find_overlapping_time_ranges(&vector!(t13.clone(), t35.clone(), t56.clone()))
+        find_overlapping_time_ranges(&vector!(t13, t35, t56))
     );
     assert_eq!(
-        ordset!(t34.clone(), t35.clone()),
-        find_overlapping_time_ranges(&vector!(t13.clone(), t34.clone(), t35.clone(), t56.clone()))
+        ordset!(t34, t35),
+        find_overlapping_time_ranges(&vector!(t13, t34, t35, t56))
     );
 }
 
@@ -199,86 +196,86 @@ fn test_displays() {
 
 #[test]
 fn test_mondays() {
-    assert_eq!(false, date(1996, 2, 25).is_monday());
-    assert_eq!(true, date(1996, 2, 26).is_monday());
-    assert_eq!(false, date(1996, 2, 27).is_monday());
-    assert_eq!(false, date(1996, 2, 28).is_monday());
-    assert_eq!(false, date(1996, 2, 29).is_monday());
-    assert_eq!(false, date(1996, 3, 1).is_monday());
-    assert_eq!(false, date(1996, 3, 2).is_monday());
-    assert_eq!(false, date(1996, 3, 3).is_monday());
-    assert_eq!(true, date(1996, 3, 4).is_monday());
+    assert!(!date(1996, 2, 25).is_monday());
+    assert!(date(1996, 2, 26).is_monday());
+    assert!(!date(1996, 2, 27).is_monday());
+    assert!(!date(1996, 2, 28).is_monday());
+    assert!(!date(1996, 2, 29).is_monday());
+    assert!(!date(1996, 3, 1).is_monday());
+    assert!(!date(1996, 3, 2).is_monday());
+    assert!(!date(1996, 3, 3).is_monday());
+    assert!(date(1996, 3, 4).is_monday());
 
-    assert_eq!(Ok(date(1996, 2, 19)), date(1996, 2, 25).this_monday());
-    assert_eq!(Ok(date(1996, 2, 26)), date(1996, 2, 26).this_monday());
-    assert_eq!(Ok(date(1996, 2, 26)), date(1996, 2, 27).this_monday());
-    assert_eq!(Ok(date(1996, 2, 26)), date(1996, 2, 28).this_monday());
-    assert_eq!(Ok(date(1996, 2, 26)), date(1996, 2, 29).this_monday());
-    assert_eq!(Ok(date(1996, 2, 26)), date(1996, 3, 1).this_monday());
-    assert_eq!(Ok(date(1996, 2, 26)), date(1996, 3, 2).this_monday());
-    assert_eq!(Ok(date(1996, 2, 26)), date(1996, 3, 3).this_monday());
-    assert_eq!(Ok(date(1996, 3, 4)), date(1996, 3, 4).this_monday());
-    assert_eq!(Ok(date(1996, 12, 30)), date(1997, 1, 5).this_monday());
+    assert_eq!(date(1996, 2, 19), date(1996, 2, 25).this_monday().unwrap());
+    assert_eq!(date(1996, 2, 26), date(1996, 2, 26).this_monday().unwrap());
+    assert_eq!(date(1996, 2, 26), date(1996, 2, 27).this_monday().unwrap());
+    assert_eq!(date(1996, 2, 26), date(1996, 2, 28).this_monday().unwrap());
+    assert_eq!(date(1996, 2, 26), date(1996, 2, 29).this_monday().unwrap());
+    assert_eq!(date(1996, 2, 26), date(1996, 3, 1).this_monday().unwrap());
+    assert_eq!(date(1996, 2, 26), date(1996, 3, 2).this_monday().unwrap());
+    assert_eq!(date(1996, 2, 26), date(1996, 3, 3).this_monday().unwrap());
+    assert_eq!(date(1996, 3, 4), date(1996, 3, 4).this_monday().unwrap());
+    assert_eq!(date(1996, 12, 30), date(1997, 1, 5).this_monday().unwrap());
 
-    assert_eq!(Ok(date(1996, 2, 19)), date(1996, 2, 26).prev_monday());
-    assert_eq!(Ok(date(1996, 2, 26)), date(1996, 2, 27).prev_monday());
-    assert_eq!(Ok(date(1996, 2, 26)), date(1996, 2, 28).prev_monday());
-    assert_eq!(Ok(date(1996, 2, 26)), date(1996, 2, 29).prev_monday());
-    assert_eq!(Ok(date(1996, 2, 26)), date(1996, 3, 1).prev_monday());
-    assert_eq!(Ok(date(1996, 2, 26)), date(1996, 3, 2).prev_monday());
-    assert_eq!(Ok(date(1996, 2, 26)), date(1996, 3, 3).prev_monday());
-    assert_eq!(Ok(date(1996, 2, 26)), date(1996, 3, 4).prev_monday());
-    assert_eq!(Ok(date(1996, 3, 4)), date(1996, 3, 11).prev_monday());
-    assert_eq!(Ok(date(1996, 12, 30)), date(1997, 1, 6).prev_monday());
+    assert_eq!(date(1996, 2, 19), date(1996, 2, 26).prev_monday().unwrap());
+    assert_eq!(date(1996, 2, 26), date(1996, 2, 27).prev_monday().unwrap());
+    assert_eq!(date(1996, 2, 26), date(1996, 2, 28).prev_monday().unwrap());
+    assert_eq!(date(1996, 2, 26), date(1996, 2, 29).prev_monday().unwrap());
+    assert_eq!(date(1996, 2, 26), date(1996, 3, 1).prev_monday().unwrap());
+    assert_eq!(date(1996, 2, 26), date(1996, 3, 2).prev_monday().unwrap());
+    assert_eq!(date(1996, 2, 26), date(1996, 3, 3).prev_monday().unwrap());
+    assert_eq!(date(1996, 2, 26), date(1996, 3, 4).prev_monday().unwrap());
+    assert_eq!(date(1996, 3, 4), date(1996, 3, 11).prev_monday().unwrap());
+    assert_eq!(date(1996, 12, 30), date(1997, 1, 6).prev_monday().unwrap());
 
-    assert_eq!(Ok(date(1996, 3, 4)), date(1996, 2, 26).next_monday());
-    assert_eq!(Ok(date(1996, 3, 4)), date(1996, 2, 27).next_monday());
-    assert_eq!(Ok(date(1996, 3, 4)), date(1996, 2, 28).next_monday());
-    assert_eq!(Ok(date(1996, 3, 4)), date(1996, 2, 29).next_monday());
-    assert_eq!(Ok(date(1996, 3, 4)), date(1996, 3, 1).next_monday());
-    assert_eq!(Ok(date(1996, 3, 4)), date(1996, 3, 2).next_monday());
-    assert_eq!(Ok(date(1996, 3, 4)), date(1996, 3, 3).next_monday());
-    assert_eq!(Ok(date(1996, 3, 11)), date(1996, 3, 4).next_monday());
-    assert_eq!(Ok(date(1997, 1, 6)), date(1996, 12, 30).next_monday());
+    assert_eq!(date(1996, 3, 4), date(1996, 2, 26).next_monday().unwrap());
+    assert_eq!(date(1996, 3, 4), date(1996, 2, 27).next_monday().unwrap());
+    assert_eq!(date(1996, 3, 4), date(1996, 2, 28).next_monday().unwrap());
+    assert_eq!(date(1996, 3, 4), date(1996, 2, 29).next_monday().unwrap());
+    assert_eq!(date(1996, 3, 4), date(1996, 3, 1).next_monday().unwrap());
+    assert_eq!(date(1996, 3, 4), date(1996, 3, 2).next_monday().unwrap());
+    assert_eq!(date(1996, 3, 4), date(1996, 3, 3).next_monday().unwrap());
+    assert_eq!(date(1996, 3, 11), date(1996, 3, 4).next_monday().unwrap());
+    assert_eq!(date(1997, 1, 6), date(1996, 12, 30).next_monday().unwrap());
 }
 
 #[test]
 fn test_sundays() {
-    assert_eq!(true, date(1996, 2, 25).is_sunday());
-    assert_eq!(false, date(1996, 2, 26).is_sunday());
-    assert_eq!(false, date(1996, 2, 27).is_sunday());
-    assert_eq!(false, date(1996, 2, 28).is_sunday());
-    assert_eq!(false, date(1996, 2, 29).is_sunday());
-    assert_eq!(false, date(1996, 3, 1).is_sunday());
-    assert_eq!(false, date(1996, 3, 2).is_sunday());
-    assert_eq!(true, date(1996, 3, 3).is_sunday());
-    assert_eq!(false, date(1996, 3, 4).is_sunday());
+    assert!(date(1996, 2, 25).is_sunday());
+    assert!(!date(1996, 2, 26).is_sunday());
+    assert!(!date(1996, 2, 27).is_sunday());
+    assert!(!date(1996, 2, 28).is_sunday());
+    assert!(!date(1996, 2, 29).is_sunday());
+    assert!(!date(1996, 3, 1).is_sunday());
+    assert!(!date(1996, 3, 2).is_sunday());
+    assert!(date(1996, 3, 3).is_sunday());
+    assert!(!date(1996, 3, 4).is_sunday());
 
-    assert_eq!(Ok(date(1996, 2, 25)), date(1996, 2, 25).this_sunday());
-    assert_eq!(Ok(date(1996, 3, 3)), date(1996, 2, 26).this_sunday());
-    assert_eq!(Ok(date(1996, 3, 3)), date(1996, 2, 27).this_sunday());
-    assert_eq!(Ok(date(1996, 3, 3)), date(1996, 2, 28).this_sunday());
-    assert_eq!(Ok(date(1996, 3, 3)), date(1996, 2, 29).this_sunday());
-    assert_eq!(Ok(date(1996, 3, 3)), date(1996, 3, 1).this_sunday());
-    assert_eq!(Ok(date(1996, 3, 3)), date(1996, 3, 2).this_sunday());
-    assert_eq!(Ok(date(1996, 3, 3)), date(1996, 3, 3).this_sunday());
-    assert_eq!(Ok(date(1996, 3, 10)), date(1996, 3, 4).this_sunday());
-    assert_eq!(Ok(date(1997, 1, 5)), date(1996, 12, 31).this_sunday());
+    assert_eq!(date(1996, 2, 25), date(1996, 2, 25).this_sunday().unwrap());
+    assert_eq!(date(1996, 3, 3), date(1996, 2, 26).this_sunday().unwrap());
+    assert_eq!(date(1996, 3, 3), date(1996, 2, 27).this_sunday().unwrap());
+    assert_eq!(date(1996, 3, 3), date(1996, 2, 28).this_sunday().unwrap());
+    assert_eq!(date(1996, 3, 3), date(1996, 2, 29).this_sunday().unwrap());
+    assert_eq!(date(1996, 3, 3), date(1996, 3, 1).this_sunday().unwrap());
+    assert_eq!(date(1996, 3, 3), date(1996, 3, 2).this_sunday().unwrap());
+    assert_eq!(date(1996, 3, 3), date(1996, 3, 3).this_sunday().unwrap());
+    assert_eq!(date(1996, 3, 10), date(1996, 3, 4).this_sunday().unwrap());
+    assert_eq!(date(1997, 1, 5), date(1996, 12, 31).this_sunday().unwrap());
 }
 
 #[test]
 fn test_date_next_prev() {
-    assert_eq!(Ok(date(1996, 12, 31)), date(1997, 1, 1).prev());
-    assert_eq!(Ok(date(1996, 1, 1)), date(1996, 1, 2).prev());
-    assert_eq!(Ok(date(1996, 1, 31)), date(1996, 2, 1).prev());
-    assert_eq!(Ok(date(1996, 2, 29)), date(1996, 3, 1).prev());
+    assert_eq!(date(1996, 12, 31), date(1997, 1, 1).prev().unwrap());
+    assert_eq!(date(1996, 1, 1), date(1996, 1, 2).prev().unwrap());
+    assert_eq!(date(1996, 1, 31), date(1996, 2, 1).prev().unwrap());
+    assert_eq!(date(1996, 2, 29), date(1996, 3, 1).prev().unwrap());
 
-    assert_eq!(Ok(date(1997, 1, 1)), date(1996, 12, 31).next());
-    assert_eq!(Ok(date(1996, 2, 1)), date(1996, 1, 31).next());
-    assert_eq!(Ok(date(1996, 2, 29)), date(1996, 2, 28).next());
-    assert_eq!(Ok(date(1996, 3, 1)), date(1996, 2, 29).next());
-    assert_eq!(Ok(date(1996, 4, 1)), date(1996, 3, 31).next());
-    assert_eq!(Ok(date(1996, 12, 1)), date(1996, 11, 30).next());
+    assert_eq!(date(1997, 1, 1), date(1996, 12, 31).next().unwrap());
+    assert_eq!(date(1996, 2, 1), date(1996, 1, 31).next().unwrap());
+    assert_eq!(date(1996, 2, 29), date(1996, 2, 28).next().unwrap());
+    assert_eq!(date(1996, 3, 1), date(1996, 2, 29).next().unwrap());
+    assert_eq!(date(1996, 4, 1), date(1996, 3, 31).next().unwrap());
+    assert_eq!(date(1996, 12, 1), date(1996, 11, 30).next().unwrap());
 }
 
 #[test]

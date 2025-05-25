@@ -1,8 +1,8 @@
-use crate::core::AppError;
 use crate::menu::{Menu, MenuItem};
 use crate::model::{Date, DateRange, DayEntry, Project};
 use crate::report;
 use crate::{append, parse};
+use anyhow::{Context, Result, anyhow};
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::KeyCode;
 use crossterm::event::{Event, poll, read};
@@ -17,7 +17,7 @@ use std::fmt::Display;
 use std::fs;
 use std::io::{Stdout, Write, stdout};
 use std::process::Command;
-use std::time::{Duration, SystemTime, SystemTimeError};
+use std::time::{Duration, SystemTime};
 
 enum RawReadResult {
     Char(char),
@@ -42,25 +42,25 @@ enum ReadResult {
 }
 
 trait Terminal {
-    fn start(&self) -> Result<(), AppError>;
-    fn stop(&self) -> Result<(), AppError>;
-    fn read(&self, timeout: Duration) -> Result<RawReadResult, AppError>;
-    fn clear(&self) -> Result<(), AppError>;
-    fn print_str(&self, s: &str) -> Result<(), AppError>;
-    fn print_styled_str(&self, s: StyledContent<&str>) -> Result<(), AppError>;
-    fn print_styled_string(&self, s: StyledContent<String>) -> Result<(), AppError>;
-    fn goto(&self, row: u16, col: u16) -> Result<(), AppError>;
+    fn start(&self) -> Result<()>;
+    fn stop(&self) -> Result<()>;
+    fn read(&self, timeout: Duration) -> Result<RawReadResult>;
+    fn clear(&self) -> Result<()>;
+    fn print_str(&self, s: &str) -> Result<()>;
+    fn print_styled_str(&self, s: StyledContent<&str>) -> Result<()>;
+    fn print_styled_string(&self, s: StyledContent<String>) -> Result<()>;
+    fn goto(&self, row: u16, col: u16) -> Result<()>;
 }
 
 trait Storage {
-    fn timestamp(&mut self, filename: &str) -> Result<u128, AppError>;
-    fn load(&mut self, filename: &str) -> Result<LoadedFile, AppError>;
+    fn timestamp(&mut self, filename: &str) -> Result<u128>;
+    fn load(&mut self, filename: &str) -> Result<LoadedFile>;
     fn append(
         &mut self,
         filename: &str,
         date: Date,
         recent_projects: Vector<&Project>,
-    ) -> Result<(), AppError>;
+    ) -> Result<()>;
 }
 
 trait AppLogic {
@@ -70,17 +70,17 @@ trait AppLogic {
         terminal: &dyn Terminal,
         storage: &mut dyn Storage,
         editor: &mut dyn Editor,
-    ) -> Result<UICommand, AppError>;
+    ) -> Result<UICommand>;
 }
 
 trait Editor {
-    fn edit_file(&self, filename: &str, line_number: u32) -> Result<(), AppError>;
+    fn edit_file(&self, filename: &str, line_number: u32) -> Result<()>;
 }
 
 struct Writer {
     context: String,
     stdout: Stdout,
-    result: Option<AppError>,
+    result: Option<anyhow::Error>,
 }
 
 impl Writer {
@@ -97,19 +97,19 @@ impl Writer {
             self.result = self
                 .stdout
                 .queue(command)
-                .err()
-                .map(|e| AppError::from_error(self.context.as_str(), error_message, e));
+                .with_context(|| format!("{}: {}", self.context, error_message))
+                .err();
         }
         self
     }
 
-    fn write(&mut self) -> Result<(), AppError> {
+    fn write(&mut self) -> Result<()> {
         if self.result.is_none() {
             self.result = self
                 .stdout
                 .flush()
-                .err()
-                .map(|e| AppError::from_error(self.context.as_str(), "flush", e));
+                .with_context(|| format!("{}: flush", self.context))
+                .err();
         }
         self.result.take().map(Err).unwrap_or(Ok(()))
     }
@@ -117,7 +117,7 @@ impl Writer {
 
 struct RealTerminal {}
 impl RealTerminal {
-    fn print<T: Display>(&self, s: T) -> Result<(), AppError> {
+    fn print<T: Display>(&self, s: T) -> Result<()> {
         Writer::new("RealTerminal.println")
             .enqueue("Clear", terminal::Clear(terminal::ClearType::CurrentLine))
             .enqueue("Print", style::Print(s))
@@ -128,24 +128,24 @@ impl RealTerminal {
 }
 
 impl Terminal for RealTerminal {
-    fn start(&self) -> Result<(), AppError> {
-        let io_err = |detail: &str, e: std::io::Error| AppError::from_error("init_term", detail, e);
-        terminal::enable_raw_mode().map_err(|e| io_err("enable_raw_mode", e))?;
-        execute!(stdout(), Hide).map_err(|e| io_err("hide cursor", e))?;
+    fn start(&self) -> Result<()> {
+        let error_context = "init_term";
+        terminal::enable_raw_mode()
+            .with_context(|| format!("{}: enable_raw_mode", error_context))?;
+        execute!(stdout(), Hide).with_context(|| format!("{}: hide cursor", error_context))?;
         Ok(())
     }
 
-    fn stop(&self) -> Result<(), AppError> {
+    fn stop(&self) -> Result<()> {
         _ = execute!(stdout(), Show);
         _ = terminal::disable_raw_mode();
         Ok(())
     }
 
-    fn read(&self, timeout: Duration) -> Result<RawReadResult, AppError> {
-        let io_err =
-            |detail: &str, e: std::io::Error| AppError::from_error("RealTerminal.read", detail, e);
-        while poll(timeout).map_err(|e| io_err("poll", e))? {
-            match read().map_err(|e| io_err("read", e))? {
+    fn read(&self, timeout: Duration) -> Result<RawReadResult> {
+        let error_context = "RealTerminal.read";
+        while poll(timeout).with_context(|| format!("{}: poll", error_context))? {
+            match read().with_context(|| format!("{}: read", error_context))? {
                 Event::Key(event) => match event.code {
                     KeyCode::Char(c) => return Ok(RawReadResult::Char(c)),
                     KeyCode::Enter => return Ok(RawReadResult::Enter),
@@ -160,26 +160,26 @@ impl Terminal for RealTerminal {
         Ok(RawReadResult::Timeout)
     }
 
-    fn clear(&self) -> Result<(), AppError> {
+    fn clear(&self) -> Result<()> {
         Writer::new("RealTerminal.clear")
             .enqueue("Clear", terminal::Clear(terminal::ClearType::All))
             .enqueue("MoveTo", cursor::MoveTo(0, 0))
             .write()
     }
 
-    fn print_str(&self, s: &str) -> Result<(), AppError> {
+    fn print_str(&self, s: &str) -> Result<()> {
         self.print(s)
     }
 
-    fn print_styled_str(&self, s: StyledContent<&str>) -> Result<(), AppError> {
+    fn print_styled_str(&self, s: StyledContent<&str>) -> Result<()> {
         self.print(s)
     }
 
-    fn print_styled_string(&self, s: StyledContent<String>) -> Result<(), AppError> {
+    fn print_styled_string(&self, s: StyledContent<String>) -> Result<()> {
         self.print(s)
     }
 
-    fn goto(&self, row: u16, col: u16) -> Result<(), AppError> {
+    fn goto(&self, row: u16, col: u16) -> Result<()> {
         Writer::new("RealTerminal.goto")
             .enqueue("MoveTo", cursor::MoveTo(col, row))
             .write()
@@ -188,23 +188,21 @@ impl Terminal for RealTerminal {
 
 struct RealStorage {}
 impl Storage for RealStorage {
-    fn timestamp(&mut self, filename: &str) -> Result<u128, AppError> {
-        let io_err = |detail: &str, e: std::io::Error| {
-            AppError::from_error("RealStorage.timestamp", detail, e)
-        };
-        let time_err = |detail: &str, e: SystemTimeError| {
-            AppError::from_error("RealStorage.timestamp", detail, e)
-        };
-        let metadata = fs::metadata(filename).map_err(|e| io_err("metadata", e))?;
-        let modified = metadata.modified().map_err(|e| io_err("modified", e))?;
+    fn timestamp(&mut self, filename: &str) -> Result<u128> {
+        let error_context = "RealStorage.timestamp";
+        let metadata =
+            fs::metadata(filename).with_context(|| format!("{}: metadata", error_context))?;
+        let modified = metadata
+            .modified()
+            .with_context(|| format!("{}: modified", error_context))?;
         let millis = modified
             .duration_since(SystemTime::UNIX_EPOCH)
-            .map_err(|e| time_err("duration_since", e))?
+            .with_context(|| format!("{}: duration_since", error_context))?
             .as_millis();
         Ok(millis)
     }
 
-    fn load(&mut self, filename: &str) -> Result<LoadedFile, AppError> {
+    fn load(&mut self, filename: &str) -> Result<LoadedFile> {
         let (day_entries, warnings) = parse::parse_file(filename)?;
         Ok(LoadedFile::new(&day_entries, &warnings))
     }
@@ -214,17 +212,15 @@ impl Storage for RealStorage {
         filename: &str,
         date: Date,
         recent_projects: Vector<&Project>,
-    ) -> Result<(), AppError> {
+    ) -> Result<()> {
         append::append_to_file(filename, date, recent_projects)
     }
 }
 
 struct RealEditor {}
 impl Editor for RealEditor {
-    fn edit_file(&self, filename: &str, line_number: u32) -> Result<(), AppError> {
-        let io_err = |detail: &str, e: std::io::Error| {
-            AppError::from_error("RealEditor.edit_file", detail, e)
-        };
+    fn edit_file(&self, filename: &str, line_number: u32) -> Result<()> {
+        let error_context = "RealEditor.edit_file";
         let editor = get_editor();
         let mut command = Command::new(editor.clone());
         if supports_line_num_arg(editor.as_str()) {
@@ -234,11 +230,11 @@ impl Editor for RealEditor {
         command.arg(filename);
         let status = command
             .spawn()
-            .map_err(|e| io_err("spawn", e))?
+            .with_context(|| format!("{}: spawn", error_context))?
             .wait()
-            .map_err(|e| io_err("wait", e))?;
+            .with_context(|| format!("{}: wait", error_context))?;
         if !status.success() {
-            return Err(AppError::from_str("edit", "editor command failed"));
+            return Err(anyhow!("{}: editor command failed", error_context));
         }
         Ok(())
     }
@@ -263,11 +259,7 @@ impl<'a> RealAppLogic<'a> {
         }
     }
 
-    fn load(
-        &mut self,
-        storage: &mut dyn Storage,
-        skip_delay: bool,
-    ) -> Result<(bool, LoadedFile), AppError> {
+    fn load(&mut self, storage: &mut dyn Storage, skip_delay: bool) -> Result<(bool, LoadedFile)> {
         let current_file_millis = storage.timestamp(self.filename)?;
         if current_file_millis == self.last_update_millis {
             return Ok((false, self.loaded.clone()));
@@ -281,7 +273,7 @@ impl<'a> RealAppLogic<'a> {
         Ok((true, self.loaded.clone()))
     }
 
-    fn append(&mut self, storage: &mut dyn Storage) -> Result<(bool, LoadedFile), AppError> {
+    fn append(&mut self, storage: &mut dyn Storage) -> Result<(bool, LoadedFile)> {
         self.load(storage, true)?;
         let date = Date::today();
         let day_entries = self.loaded.day_entries();
@@ -298,7 +290,7 @@ impl<'a> RealAppLogic<'a> {
         storage: &mut dyn Storage,
         terminal: &dyn Terminal,
         editor: &mut dyn Editor,
-    ) -> Result<(bool, LoadedFile), AppError> {
+    ) -> Result<(bool, LoadedFile)> {
         let line_number = self
             .loaded
             .day_entries()
@@ -315,11 +307,7 @@ impl<'a> RealAppLogic<'a> {
         self.load(storage, true)
     }
 
-    fn read(
-        &mut self,
-        menu: &mut Menu<ReadResult>,
-        terminal: &dyn Terminal,
-    ) -> Result<ReadResult, AppError> {
+    fn read(&mut self, menu: &mut Menu<ReadResult>, terminal: &dyn Terminal) -> Result<ReadResult> {
         loop {
             match terminal.read(self.read_timeout)? {
                 RawReadResult::Char(c) => match menu.select(c) {
@@ -343,7 +331,7 @@ impl AppLogic for RealAppLogic<'_> {
         terminal: &dyn Terminal,
         storage: &mut dyn Storage,
         editor: &mut dyn Editor,
-    ) -> Result<UICommand, AppError> {
+    ) -> Result<UICommand> {
         match self.read(menu, terminal)? {
             ReadResult::Quit => Ok(UICommand::Quit),
             ReadResult::Reload => match self.load(storage, true) {
@@ -389,7 +377,7 @@ enum UICommand {
     Report(LoadedFile),
     UpdateMenu,
     DisplayWarnings(LoadedFile),
-    DisplayError(AppError),
+    DisplayError(anyhow::Error),
 }
 
 impl LoadedFile {
@@ -416,7 +404,7 @@ fn ui_impl(
     editor: &mut dyn Editor,
     storage: &mut dyn Storage,
     logic: &mut dyn AppLogic,
-) -> Result<(), AppError> {
+) -> Result<()> {
     terminal.start()?;
     defer! {
         _=terminal.stop();
@@ -446,7 +434,7 @@ fn ui_impl(
     }
 }
 
-pub fn watch_and_report(filename: &str, dates: &dyn Fn() -> DateRange) -> Result<(), AppError> {
+pub fn watch_and_report(filename: &str, dates: &dyn Fn() -> DateRange) -> Result<()> {
     ui_impl(
         filename,
         dates,
@@ -458,7 +446,7 @@ pub fn watch_and_report(filename: &str, dates: &dyn Fn() -> DateRange) -> Result
     )
 }
 
-fn create_menu() -> Result<Menu<ReadResult>, AppError> {
+fn create_menu() -> Result<Menu<ReadResult>> {
     let menu_items = vector!(
         MenuItem::new(ReadResult::Edit, "Edit", "Edit the file."),
         MenuItem::new(
@@ -473,7 +461,7 @@ fn create_menu() -> Result<Menu<ReadResult>, AppError> {
     Menu::new(menu_items)
 }
 
-fn display_menu(terminal: &dyn Terminal, menu: &Menu<ReadResult>) -> Result<(), AppError> {
+fn display_menu(terminal: &dyn Terminal, menu: &Menu<ReadResult>) -> Result<()> {
     terminal.goto(0, 0)?;
     terminal.print_str(menu.render().as_str())?;
     terminal.print_styled_str(menu.description().yellow())
@@ -481,17 +469,16 @@ fn display_menu(terminal: &dyn Terminal, menu: &Menu<ReadResult>) -> Result<(), 
 
 fn print_error(
     filename: &str,
-    error: AppError,
+    error: anyhow::Error,
     terminal: &dyn Terminal,
     menu: &Menu<ReadResult>,
-) -> Result<(), AppError> {
+) -> Result<()> {
     terminal.clear()?;
     display_menu(terminal, menu)?;
     terminal.goto(3, 0)?;
     terminal.print_styled_str("error:".red())?;
     terminal.print_styled_string(format!("   filename: {}", filename).red())?;
-    terminal.print_styled_string(format!("    context: {}", error.context()).red())?;
-    terminal.print_styled_string(format!("     detail: {}", error.detail()).red())
+    terminal.print_styled_string(format!("    message: {:?}", error).red())
 }
 
 fn print_file(
@@ -499,7 +486,7 @@ fn print_file(
     dates: DateRange,
     terminal: &dyn Terminal,
     menu: &Menu<ReadResult>,
-) -> Result<(), AppError> {
+) -> Result<()> {
     terminal.clear()?;
     display_menu(terminal, menu)?;
     terminal.goto(3, 0)?;
@@ -528,7 +515,7 @@ fn print_warnings(
     file: &LoadedFile,
     terminal: &dyn Terminal,
     menu: &Menu<ReadResult>,
-) -> Result<(), AppError> {
+) -> Result<()> {
     terminal.clear()?;
     display_menu(terminal, menu)?;
     terminal.goto(3, 0)?;

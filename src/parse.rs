@@ -1,5 +1,6 @@
-use crate::core::AppError;
 use crate::model::{Date, DayEntry, Project, ProjectTimes, Time, TimeRange};
+use anyhow::Result;
+use anyhow::{Context, anyhow};
 use im::Vector;
 use lazy_static::lazy_static;
 use regex::Regex;
@@ -39,25 +40,25 @@ fn remove_comments(source: &str) -> String {
     current
 }
 
-fn parse_time(hhmm: &str) -> Result<Time, AppError> {
+fn parse_time(hhmm: &str) -> Result<Time> {
     Time::parse(hhmm)
 }
 
-fn parse_time_range(text: &str) -> Result<TimeRange, AppError> {
+fn parse_time_range(text: &str) -> Result<TimeRange> {
     let caps = TIME_RANGE_RE
         .captures(text)
-        .ok_or_else(|| AppError::from_str("parse_time_range", "not a time range"))?;
+        .ok_or_else(|| anyhow!("parse_time_range: not a time range"))?;
     let from = parse_time(caps[1].to_string().as_str())?;
     let to = parse_time(caps[2].to_string().as_str())?;
     TimeRange::new(from, to)
 }
 
 // Function to parse the time ranges from a string (e.g., "0800-1200,1300-1310,1318-1708")
-fn parse_time_ranges(time_range_str: &str) -> Result<(Vector<TimeRange>, bool), AppError> {
+fn parse_time_ranges(time_range_str: &str) -> Result<(Vector<TimeRange>, bool)> {
     if !TIME_RANGES_RE.is_match(time_range_str) {
-        return Err(AppError::from_str(
-            "parse_time_ranges",
-            &format!("invalid time ranges: {}", time_range_str),
+        return Err(anyhow!(
+            "parse_time_ranges: invalid time ranges: {}",
+            time_range_str
         ));
     };
 
@@ -85,18 +86,18 @@ fn is_empty_time_line(line: &str) -> bool {
 }
 
 // Function to parse a date line (e.g., "Date: Thursday 04/03/2025")
-fn parse_date_line(line: &str) -> Result<Date, AppError> {
+fn parse_date_line(line: &str) -> Result<Date> {
     let caps = DATE_LINE_RE
         .captures(line)
-        .ok_or_else(|| AppError::from_str("parse_date_line", "not a date line"))?;
+        .ok_or_else(|| anyhow!("parse_date_line: not a date line"))?;
     Date::parse(caps[1].to_string().as_str())
 }
 
 // Function to parse label and time ranges (e.g., "client,project: 0800-1200,1300-1310")
-fn parse_time_line(line: &str) -> Result<(ProjectTimes, bool), AppError> {
+fn parse_time_line(line: &str) -> Result<(ProjectTimes, bool)> {
     let caps = TIME_LINE_RE
         .captures(line)
-        .ok_or_else(|| AppError::from_str("parse_time_line", "not a time line"))?;
+        .ok_or_else(|| anyhow!("parse_time_line: not a time line"))?;
     let client = caps[1].to_string();
     let project = caps[2].to_string();
     let (time_ranges, incomplete) = parse_time_ranges(&caps[3])?;
@@ -110,9 +111,9 @@ fn parse_time_line(line: &str) -> Result<(ProjectTimes, bool), AppError> {
 }
 
 // Function to parse a file into day entries
-pub fn parse_file(file_path: &str) -> Result<(Vector<DayEntry>, Vector<String>), AppError> {
+pub fn parse_file(file_path: &str) -> Result<(Vector<DayEntry>, Vector<String>)> {
     let path = Path::new(file_path);
-    let file = File::open(path).map_err(|e| AppError::from_error("parse_file", "open", e))?;
+    let file = File::open(path).with_context(|| "parse_file: open")?;
     let reader = io::BufReader::new(file);
 
     let mut days = Vector::new();
@@ -127,7 +128,7 @@ pub fn parse_file(file_path: &str) -> Result<(Vector<DayEntry>, Vector<String>),
         line_num += 1;
         let line = raw_line
             .map(|s| remove_comments(&s))
-            .map_err(|e| AppError::from_error("parse_file", "read", e))?;
+            .with_context(|| "parse_file: read")?;
 
         if is_date_line(line.as_str()) {
             date_line_num = line_num;
@@ -161,9 +162,9 @@ pub fn parse_file(file_path: &str) -> Result<(Vector<DayEntry>, Vector<String>),
                 }
                 projects.push_back(time_ranges);
             } else {
-                return Err(AppError::from_str(
-                    "parse_file",
-                    format!("time line before any dates:{line_num}: '{}'", line).as_str(),
+                return Err(anyhow!(
+                    "parse_file: time line before any dates:{line_num}: '{}'",
+                    line
                 ));
             }
         } else if line == "END" {

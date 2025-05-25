@@ -1,10 +1,8 @@
+use anyhow::{Result, anyhow};
 use im::{HashMap, OrdSet, Vector};
 use model::{Date, DateRange, DayEntry, Project};
 
-use crate::{
-    core::AppError,
-    model::{self, ProjectTimes},
-};
+use crate::model::{self, ProjectTimes};
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone)]
 struct Key {
@@ -136,21 +134,17 @@ struct ReportData {
 pub fn create_report(
     dates: DateRange,
     all_day_entries: &Vector<DayEntry>,
-) -> Result<Vector<String>, AppError> {
+) -> Result<Vector<String>> {
     let data = compute_report_data(dates, all_day_entries)?;
     let lines = render_report_data(&data)?;
     Ok(lines)
 }
 
-fn compute_report_data(
-    dates: DateRange,
-    all_day_entries: &Vector<DayEntry>,
-) -> Result<ReportData, AppError> {
+fn compute_report_data(dates: DateRange, all_day_entries: &Vector<DayEntry>) -> Result<ReportData> {
     let day_entries = day_entries_in_range(&dates, all_day_entries);
     if day_entries.is_empty() {
-        return Err(AppError::from_str(
-            "compute_report_data",
-            "no data available for date range",
+        return Err(anyhow!(
+            "compute_report_data: no data available for date range"
         ));
     }
 
@@ -222,7 +216,7 @@ fn create_day_labels() -> String {
 
 const COLUMN_PAD: usize = 3;
 
-fn render_dates_line(monday: Date) -> Result<String, AppError> {
+fn render_dates_line(monday: Date) -> Result<String> {
     let mut line = "".to_string();
     let mut d = monday;
     loop {
@@ -271,11 +265,7 @@ fn render_delta(delta_minutes: i32, hour_len: usize) -> String {
     }
 }
 
-fn render_times_line(
-    monday: Date,
-    project: &Project,
-    week_data: &WeekData,
-) -> Result<String, AppError> {
+fn render_times_line(monday: Date, project: &Project, week_data: &WeekData) -> Result<String> {
     let mut line = "".to_string();
     let mut d = monday;
     loop {
@@ -300,7 +290,7 @@ fn render_times_line(
     Ok(line)
 }
 
-fn render_totals_line(monday: Date, week_data: &WeekData) -> Result<String, AppError> {
+fn render_totals_line(monday: Date, week_data: &WeekData) -> Result<String> {
     let mut line = "".to_string();
     let mut d = monday;
     loop {
@@ -318,7 +308,7 @@ fn render_totals_line(monday: Date, week_data: &WeekData) -> Result<String, AppE
     Ok(line)
 }
 
-fn render_billables_line(monday: Date, week_data: &WeekData) -> Result<String, AppError> {
+fn render_billables_line(monday: Date, week_data: &WeekData) -> Result<String> {
     let mut line = "".to_string();
     let mut d = monday;
     loop {
@@ -399,7 +389,7 @@ fn render_grand_totals(
     answer
 }
 
-fn render_report_data(report_data: &ReportData) -> Result<Vector<String>, AppError> {
+fn render_report_data(report_data: &ReportData) -> Result<Vector<String>> {
     let mut answer = Vector::new();
 
     let left_labels = create_project_labels(&report_data.projects);
@@ -419,10 +409,7 @@ fn render_report_data(report_data: &ReportData) -> Result<Vector<String>, AppErr
         let week_data = if let Some(w) = report_data.weeks.get(&d.week_num()) {
             w
         } else {
-            return Err(AppError::from_str(
-                "render_report_data",
-                "unable to find week data!",
-            ));
+            return Err(anyhow!("render_report_data: unable to find week data!"));
         };
         for p in report_data.projects.iter() {
             i += 1;

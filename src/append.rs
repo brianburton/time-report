@@ -1,5 +1,6 @@
-use crate::core::{AppError, create_temp_file, delete_file};
+use crate::core::{create_temp_file, delete_file};
 use crate::model::{Date, DayEntry, Project};
+use anyhow::{Context, Result, anyhow};
 use im::{HashMap, Vector};
 use scopeguard::defer;
 use std::cmp::Ordering;
@@ -17,20 +18,21 @@ pub fn recent_projects(
     projects_sorted_by_date(all_projects_map, max_to_return)
 }
 
-pub fn validate_date(all_day_entries: &Vector<DayEntry>, date: Date) -> Result<(), AppError> {
+pub fn validate_date(all_day_entries: &Vector<DayEntry>, date: Date) -> Result<()> {
     for day in all_day_entries {
         match day.date().cmp(&date) {
             Ordering::Less => {}
             Ordering::Equal => {
-                return Err(AppError::from_str(
-                    "append_to_file",
-                    format!("date already in file: date='{}'", date).as_str(),
+                return Err(anyhow!(
+                    "append_to_file: date already in file: date='{}'",
+                    date
                 ));
             }
             Ordering::Greater => {
-                return Err(AppError::from_str(
-                    "append_to_file",
-                    format!("newer date in file: date='{}' newer='{}'", date, day.date()).as_str(),
+                return Err(anyhow!(
+                    "append_to_file: newer date in file: date='{}' newer='{}'",
+                    date,
+                    day.date()
                 ));
             }
         }
@@ -50,52 +52,50 @@ fn create_date_str(prev_blank: bool, date: Date, projects: &Vector<&Project>) ->
     s
 }
 
-pub fn append_to_file(
-    filename: &str,
-    date: Date,
-    projects: Vector<&Project>,
-) -> Result<(), AppError> {
-    let io_err =
-        |detail: &str, e: std::io::Error| AppError::from_error("append_to_file", detail, e);
+pub fn append_to_file(filename: &str, date: Date, projects: Vector<&Project>) -> Result<()> {
+    let error_context = "append_to_file";
     let temp_file = create_temp_file(filename)?;
     defer! { delete_file(&temp_file).unwrap_or(())}
 
     let input_path = Path::new(filename);
-    let input_file = File::open(input_path).map_err(|e| io_err("open", e))?;
+    let input_file =
+        File::open(input_path).with_context(|| format!("{}: open failed", error_context))?;
     let reader = io::BufReader::new(input_file);
 
     let output_path = Path::new(&temp_file);
-    let output_file = File::create(output_path).map_err(|e| io_err("create", e))?;
+    let output_file =
+        File::create(output_path).with_context(|| format!("{}: create failed", error_context))?;
     let mut writer = io::BufWriter::new(output_file);
 
     let mut appended = false;
     let mut prev_blank = true;
     for raw_line in reader.lines() {
-        let line = raw_line.map_err(|e| io_err("read", e))?;
+        let line = raw_line.with_context(|| format!("{}: read failed", error_context))?;
         let trimmed = line.trim();
         if trimmed == "END" && !appended {
             writer
                 .write_all(create_date_str(prev_blank, date, &projects).as_bytes())
-                .map_err(|e| io_err("write", e))?;
+                .with_context(|| format!("{}: write failed", error_context))?;
             writer
                 .write_all("\n".as_bytes())
-                .map_err(|e| io_err("write", e))?;
+                .with_context(|| format!("{}: write failed", error_context))?;
             appended = true;
         }
         writer
             .write_all(line.as_bytes())
-            .map_err(|e| io_err("write", e))?;
+            .with_context(|| format!("{}: write failed", error_context))?;
         writer
             .write_all("\n".as_bytes())
-            .map_err(|e| io_err("write", e))?;
+            .with_context(|| format!("{}: write failed", error_context))?;
         prev_blank = trimmed.is_empty();
     }
     if !appended {
         writer
             .write_all(create_date_str(prev_blank, date, &projects).as_bytes())
-            .map_err(|e| io_err("write", e))?;
+            .with_context(|| format!("{}: write failed", error_context))?;
     }
-    fs::rename(&temp_file, filename).map_err(|e| io_err("rename", e))?;
+    fs::rename(&temp_file, filename)
+        .with_context(|| format!("{}: rename failed", error_context))?;
     Ok(())
 }
 

@@ -9,13 +9,13 @@ mod random;
 mod report;
 mod watch;
 
-use core::AppError;
+use anyhow::{Result, anyhow};
 use im::Vector;
 use model::{Date, DateRange, DayEntry};
 use std::env;
 use std::env::Args;
 
-fn command_append(args: &mut Args) -> Result<(), AppError> {
+fn command_append(args: &mut Args) -> Result<()> {
     let (filename, all_day_entries) = load_file(args)?;
     let date = Date::today();
     append::validate_date(&all_day_entries, date)?;
@@ -25,7 +25,7 @@ fn command_append(args: &mut Args) -> Result<(), AppError> {
     append::append_to_file(filename.as_str(), date, recent_projects)
 }
 
-fn command_random(args: &mut Args) -> Result<(), AppError> {
+fn command_random(args: &mut Args) -> Result<()> {
     let dates = load_dates(args)?();
     let mut rnd = random::Random::new();
     let day_entries = random::random_day_entries(&mut rnd, dates);
@@ -48,7 +48,7 @@ fn command_random(args: &mut Args) -> Result<(), AppError> {
     Ok(())
 }
 
-fn command_report(args: &mut Args) -> Result<(), AppError> {
+fn command_report(args: &mut Args) -> Result<()> {
     let (_, all_day_entries) = load_file(args)?;
     let dates = load_dates(args)?();
     println!("Reporting from {} to {}", dates.first(), dates.last());
@@ -60,7 +60,7 @@ fn command_report(args: &mut Args) -> Result<(), AppError> {
     Ok(())
 }
 
-fn command_watch(args: &mut Args) -> Result<(), AppError> {
+fn command_watch(args: &mut Args) -> Result<()> {
     let filename = get_filename(args)?;
     let dates = load_dates(args)?;
 
@@ -68,7 +68,7 @@ fn command_watch(args: &mut Args) -> Result<(), AppError> {
     Ok(())
 }
 
-fn load_file(args: &mut Args) -> Result<(String, Vector<DayEntry>), AppError> {
+fn load_file(args: &mut Args) -> Result<(String, Vector<DayEntry>)> {
     let filename = get_filename(args)?;
 
     println!("Loading {}...", filename);
@@ -78,14 +78,14 @@ fn load_file(args: &mut Args) -> Result<(String, Vector<DayEntry>), AppError> {
     Ok((filename, all_day_entries))
 }
 
-fn get_filename(args: &mut Args) -> Result<String, AppError> {
+fn get_filename(args: &mut Args) -> Result<String> {
     let filename = args
         .next()
-        .ok_or_else(|| AppError::from_str("load_file", "usage: missing file name"))?;
+        .ok_or_else(|| anyhow!("load_file: usage: missing file name"))?;
     Ok(filename)
 }
 
-fn load_dates(args: &mut Args) -> Result<Box<dyn Fn() -> DateRange>, AppError> {
+fn load_dates(args: &mut Args) -> Result<Box<dyn Fn() -> DateRange>> {
     let first_date = args.next().map(|s| Date::parse(&s)).transpose()?;
     let last_date = args.next().map(|s| Date::parse(&s)).transpose()?;
     let dates_fn: Box<dyn Fn() -> DateRange> = match (first_date, last_date) {
@@ -96,20 +96,17 @@ fn load_dates(args: &mut Args) -> Result<Box<dyn Fn() -> DateRange>, AppError> {
     Ok(dates_fn)
 }
 
-fn main() -> Result<(), AppError> {
+fn main() -> Result<()> {
     let mut args = env::args();
     let command = args
         .nth(1)
-        .ok_or_else(|| AppError::from_str("main", "usage: missing command"))?;
+        .ok_or_else(|| anyhow!("main: usage: missing command"))?;
 
     match command.as_str() {
         "append" => command_append(&mut args),
         "random" => command_random(&mut args),
         "report" => command_report(&mut args),
         "watch" => command_watch(&mut args),
-        _ => Err(AppError::from_str(
-            "main",
-            format!("usage: invalid command {}", command.as_str()).as_str(),
-        ))?,
+        _ => Err(anyhow!("main: usage: invalid command {}", command.as_str()))?,
     }
 }
