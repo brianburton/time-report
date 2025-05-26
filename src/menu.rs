@@ -1,4 +1,5 @@
-use crate::core::AppError;
+use anyhow::Result;
+use anyhow::anyhow;
 use crossterm::style::Stylize;
 use im::Vector;
 
@@ -43,9 +44,9 @@ pub struct Menu<T: Clone + Copy> {
 }
 
 impl<T: Clone + Copy> Menu<T> {
-    pub fn new(items: Vector<MenuItem<T>>) -> Result<Menu<T>, AppError> {
+    pub fn new(items: Vector<MenuItem<T>>) -> Result<Menu<T>> {
         if items.is_empty() {
-            Err(AppError::from_str("Menu", "No menu items found"))
+            Err(anyhow!("Menu: No menu items found"))
         } else {
             Ok(Menu {
                 items,

@@ -1,6 +1,7 @@
 use std::fmt::Display;
 
-use crate::core::{AppError, parse_capture_group};
+use crate::core::parse_capture_group;
+use anyhow::{Result, anyhow};
 use chrono::Datelike;
 use derive_getters::Getters;
 use im::{HashSet, OrdSet, Vector, hashset, vector};
@@ -50,16 +51,16 @@ impl Display for Time {
 }
 
 impl Time {
-    pub fn new(hour: u16, minute: u16) -> Result<Time, AppError> {
+    pub fn new(hour: u16, minute: u16) -> Result<Time> {
         if !is_valid_time(hour, minute) {
-            Err(AppError::from_str("Time::new", "not a valid time"))
+            Err(anyhow!("Time::new: not a valid time"))
         } else {
             let minute = hour * 60 + minute;
             Ok(Time { minute })
         }
     }
 
-    pub fn parse(text: &str) -> Result<Time, AppError> {
+    pub fn parse(text: &str) -> Result<Time> {
         let re_captures = TIME_RE.captures(text);
         let h: u16 = parse_capture_group("Time::parse:hour", text, &re_captures, 1)?;
         let m: u16 = parse_capture_group("Time::parse:minute", text, &re_captures, 2)?;
@@ -93,18 +94,18 @@ impl Display for Date {
 }
 
 impl Date {
-    pub fn new(year: u16, month: u8, day: u8) -> Result<Date, AppError> {
+    pub fn new(year: u16, month: u8, day: u8) -> Result<Date> {
         if !is_valid_date(year, month, day) {
-            Err(AppError::from_str(
-                "Date::new",
-                format!("not a valid date: {}/{}/{}", month, day, year).as_str(),
-            ))
+            Err(anyhow!(format!(
+                "Date::new: not a valid date: {}/{}/{}",
+                month, day, year
+            )))
         } else {
             Ok(Date { year, month, day })
         }
     }
 
-    pub fn parse(text: &str) -> Result<Date, AppError> {
+    pub fn parse(text: &str) -> Result<Date> {
         let re_captures = DATE_RE.captures(text);
         let m: u8 = parse_capture_group("Date::parse:month", text, &re_captures, 1)?;
         let d: u8 = parse_capture_group("Date::parse:day", text, &re_captures, 2)?;
@@ -146,7 +147,7 @@ impl Date {
         !self.is_weekend()
     }
 
-    pub fn this_monday(&self) -> Result<Date, AppError> {
+    pub fn this_monday(&self) -> Result<Date> {
         if self.is_monday() {
             Ok(*self)
         } else {
@@ -154,7 +155,7 @@ impl Date {
         }
     }
 
-    pub fn this_sunday(&self) -> Result<Date, AppError> {
+    pub fn this_sunday(&self) -> Result<Date> {
         if self.is_sunday() {
             Ok(*self)
         } else {
@@ -162,7 +163,7 @@ impl Date {
         }
     }
 
-    pub fn prev_monday(&self) -> Result<Date, AppError> {
+    pub fn prev_monday(&self) -> Result<Date> {
         let days_past = (self.day_num() % 7) as u8;
         let days_offset = if days_past == 0 { 7 } else { days_past };
         if days_offset < self.day {
@@ -178,7 +179,7 @@ impl Date {
         }
     }
 
-    pub fn next_monday(&self) -> Result<Date, AppError> {
+    pub fn next_monday(&self) -> Result<Date> {
         let days_past = (self.day_num() % 7) as u8;
         let days_offset = 7 - days_past;
         let days_remaining = days_in_month(self.year, self.month) - self.day;
@@ -237,7 +238,7 @@ impl Date {
         self.day_num() / 7
     }
 
-    pub fn prev(&self) -> Result<Date, AppError> {
+    pub fn prev(&self) -> Result<Date> {
         if self.day > 1 {
             Date::new(self.year, self.month, self.day - 1)
         } else if self.month > 1 {
@@ -251,7 +252,7 @@ impl Date {
         }
     }
 
-    pub fn next(&self) -> Result<Date, AppError> {
+    pub fn next(&self) -> Result<Date> {
         if self.day < days_in_month(self.year, self.month) {
             Date::new(self.year, self.month, self.day + 1)
         } else if self.month < 12 {
@@ -261,7 +262,7 @@ impl Date {
         }
     }
 
-    pub(crate) fn minus_days(&self, days: i32) -> Result<Date, AppError> {
+    pub(crate) fn minus_days(&self, days: i32) -> Result<Date> {
         let mut d = *self;
         let mut r = days;
         while r > 0 {
@@ -322,7 +323,7 @@ impl DateRange {
         self.first <= *d && *d <= self.last
     }
 
-    pub fn as_full_weeks(&self) -> Result<DateRange, AppError> {
+    pub fn as_full_weeks(&self) -> Result<DateRange> {
         let first = self.first.this_monday()?;
         let last = self.last.this_sunday()?;
         Ok(DateRange { first, last })
@@ -342,12 +343,9 @@ impl Display for TimeRange {
 }
 
 impl TimeRange {
-    pub fn new(from: Time, to: Time) -> Result<TimeRange, AppError> {
+    pub fn new(from: Time, to: Time) -> Result<TimeRange> {
         if from >= to {
-            Err(AppError::from_str(
-                "TimeRange::new",
-                "out of order time range",
-            ))
+            Err(anyhow!("TimeRange::new: out of order time range"))
         } else {
             Ok(TimeRange { from, to })
         }
@@ -399,10 +397,7 @@ pub struct ProjectTimes {
 }
 
 impl ProjectTimes {
-    pub fn new(
-        project: Project,
-        time_ranges: &Vector<TimeRange>,
-    ) -> Result<ProjectTimes, AppError> {
+    pub fn new(project: Project, time_ranges: &Vector<TimeRange>) -> Result<ProjectTimes> {
         let mut sorted = time_ranges.clone();
         let conflicts = find_overlapping_time_ranges(time_ranges);
         if !conflicts.is_empty() {
@@ -412,7 +407,7 @@ impl ProjectTimes {
                 project.code,
                 ordset_to_string(&conflicts)
             );
-            return Err(AppError::from_str("ProjectTimes::new", detail.as_str()));
+            return Err(anyhow!("ProjectTimes::new: {}", detail));
         }
         sorted.sort();
         Ok(ProjectTimes {
