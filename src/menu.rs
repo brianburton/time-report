@@ -1,9 +1,10 @@
 use anyhow::Result;
 use anyhow::anyhow;
 use crossterm::style::Stylize;
+use derive_getters::Getters;
 use im::Vector;
 
-#[derive(Clone)]
+#[derive(Clone, Getters)]
 pub struct MenuItem<T: Clone + Copy> {
     name: String,
     description: String,
@@ -38,6 +39,7 @@ impl<T: Clone + Copy> MenuItem<T> {
     }
 }
 
+#[derive(Getters)]
 pub struct Menu<T: Clone + Copy> {
     items: Vector<MenuItem<T>>,
     selected_index: usize,

@@ -1,3 +1,11 @@
+use ratatui::{
+    Frame, Terminal,
+    layout::{Constraint, Layout},
+    style::{Color, Modifier, Style, Stylize},
+    text::{Line, Span, Text},
+    widgets::{Block, Paragraph},
+};
+
 use crate::menu::{Menu, MenuItem};
 use crate::model::{Date, DateRange, DayEntry, Project};
 use crate::report;
@@ -6,18 +14,22 @@ use anyhow::{Context, Result, anyhow};
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::KeyCode;
 use crossterm::event::{Event, poll, read};
-use crossterm::style::{StyledContent, Stylize};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use crossterm::{QueueableCommand, cursor, execute, style, terminal};
 use derive_getters::Getters;
 use im::{Vector, vector};
+use log::warn;
+use ratatui::buffer::Buffer;
+use ratatui::prelude::{Backend, Rect, Widget};
 use regex::Regex;
 use scopeguard::defer;
-use std::env;
 use std::fmt::Display;
 use std::fs;
+use std::fs::File;
 use std::io::{Stdout, Write, stdout};
 use std::process::Command;
 use std::time::{Duration, SystemTime};
+use std::{env, num::NonZero};
 
 enum RawReadResult {
     Char(char),
@@ -41,15 +53,15 @@ enum ReadResult {
     Timeout,
 }
 
-trait Terminal {
-    fn start(&self) -> Result<()>;
-    fn stop(&self) -> Result<()>;
+trait AppInput {
     fn read(&self, timeout: Duration) -> Result<RawReadResult>;
-    fn clear(&self) -> Result<()>;
-    fn print_str(&self, s: &str) -> Result<()>;
-    fn print_styled_str(&self, s: StyledContent<&str>) -> Result<()>;
-    fn print_styled_string(&self, s: StyledContent<String>) -> Result<()>;
-    fn goto(&self, row: u16, col: u16) -> Result<()>;
+}
+
+trait AppDisplay {
+    fn clear(&mut self) -> Result<()>;
+    fn draw(&mut self, region_factory: &dyn Fn(Rect) -> Vector<Region>) -> Result<()>;
+    fn pause(&mut self) -> Result<()>;
+    fn resume(&mut self) -> Result<()>;
 }
 
 trait Storage {
@@ -67,7 +79,8 @@ trait AppLogic {
     fn run(
         &mut self,
         menu: &mut Menu<ReadResult>,
-        terminal: &dyn Terminal,
+        app_input: &mut dyn AppInput,
+        app_screen: &mut dyn AppDisplay,
         storage: &mut dyn Storage,
         editor: &mut dyn Editor,
     ) -> Result<UICommand>;
@@ -77,71 +90,14 @@ trait Editor {
     fn edit_file(&self, filename: &str, line_number: u32) -> Result<()>;
 }
 
-struct Writer {
-    context: String,
-    stdout: Stdout,
-    result: Option<anyhow::Error>,
-}
-
-impl Writer {
-    fn new(context: &str) -> Self {
-        Writer {
-            context: context.to_string(),
-            stdout: stdout(),
-            result: None,
-        }
-    }
-
-    fn enqueue<T: crossterm::Command>(&mut self, error_message: &str, command: T) -> &mut Self {
-        if self.result.is_none() {
-            self.result = self
-                .stdout
-                .queue(command)
-                .with_context(|| format!("{}: {}", self.context, error_message))
-                .err();
-        }
-        self
-    }
-
-    fn write(&mut self) -> Result<()> {
-        if self.result.is_none() {
-            self.result = self
-                .stdout
-                .flush()
-                .with_context(|| format!("{}: flush", self.context))
-                .err();
-        }
-        self.result.take().map(Err).unwrap_or(Ok(()))
+struct RealAppInput {}
+impl RealAppInput {
+    fn new() -> Self {
+        Self {}
     }
 }
 
-struct RealTerminal {}
-impl RealTerminal {
-    fn print<T: Display>(&self, s: T) -> Result<()> {
-        Writer::new("RealTerminal.println")
-            .enqueue("Clear", terminal::Clear(terminal::ClearType::CurrentLine))
-            .enqueue("Print", style::Print(s))
-            .enqueue("MoveDown", cursor::MoveDown(1))
-            .enqueue("MoveToColumn", cursor::MoveToColumn(0))
-            .write()
-    }
-}
-
-impl Terminal for RealTerminal {
-    fn start(&self) -> Result<()> {
-        let error_context = "init_term";
-        terminal::enable_raw_mode()
-            .with_context(|| format!("{}: enable_raw_mode", error_context))?;
-        execute!(stdout(), Hide).with_context(|| format!("{}: hide cursor", error_context))?;
-        Ok(())
-    }
-
-    fn stop(&self) -> Result<()> {
-        _ = execute!(stdout(), Show);
-        _ = terminal::disable_raw_mode();
-        Ok(())
-    }
-
+impl AppInput for RealAppInput {
     fn read(&self, timeout: Duration) -> Result<RawReadResult> {
         let error_context = "RealTerminal.read";
         while poll(timeout).with_context(|| format!("{}: poll", error_context))? {
@@ -158,31 +114,6 @@ impl Terminal for RealTerminal {
             }
         }
         Ok(RawReadResult::Timeout)
-    }
-
-    fn clear(&self) -> Result<()> {
-        Writer::new("RealTerminal.clear")
-            .enqueue("Clear", terminal::Clear(terminal::ClearType::All))
-            .enqueue("MoveTo", cursor::MoveTo(0, 0))
-            .write()
-    }
-
-    fn print_str(&self, s: &str) -> Result<()> {
-        self.print(s)
-    }
-
-    fn print_styled_str(&self, s: StyledContent<&str>) -> Result<()> {
-        self.print(s)
-    }
-
-    fn print_styled_string(&self, s: StyledContent<String>) -> Result<()> {
-        self.print(s)
-    }
-
-    fn goto(&self, row: u16, col: u16) -> Result<()> {
-        Writer::new("RealTerminal.goto")
-            .enqueue("MoveTo", cursor::MoveTo(col, row))
-            .write()
     }
 }
 
@@ -288,7 +219,7 @@ impl<'a> RealAppLogic<'a> {
     fn edit(
         &mut self,
         storage: &mut dyn Storage,
-        terminal: &dyn Terminal,
+        app_screen: &mut dyn AppDisplay,
         editor: &mut dyn Editor,
     ) -> Result<(bool, LoadedFile)> {
         let line_number = self
@@ -298,16 +229,19 @@ impl<'a> RealAppLogic<'a> {
             .map(|e| e.line_number())
             .unwrap_or(&0);
 
-        terminal.stop()?;
+        app_screen.pause();
+        // disable_raw_mode()?;
+        // terminal.clear()?;
         defer! {
-            _=terminal.start();
+            // _=enable_raw_mode();
+            app_screen.resume();
         }
 
         editor.edit_file(self.filename, *line_number)?;
         self.load(storage, true)
     }
 
-    fn read(&mut self, menu: &mut Menu<ReadResult>, terminal: &dyn Terminal) -> Result<ReadResult> {
+    fn read(&mut self, menu: &mut Menu<ReadResult>, terminal: &dyn AppInput) -> Result<ReadResult> {
         loop {
             match terminal.read(self.read_timeout)? {
                 RawReadResult::Char(c) => match menu.select(c) {
@@ -328,18 +262,19 @@ impl AppLogic for RealAppLogic<'_> {
     fn run(
         &mut self,
         menu: &mut Menu<ReadResult>,
-        terminal: &dyn Terminal,
+        app_input: &mut dyn AppInput,
+        app_screen: &mut dyn AppDisplay,
         storage: &mut dyn Storage,
         editor: &mut dyn Editor,
     ) -> Result<UICommand> {
-        match self.read(menu, terminal)? {
+        match self.read(menu, app_input)? {
             ReadResult::Quit => Ok(UICommand::Quit),
             ReadResult::Reload => match self.load(storage, true) {
                 Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
                 Err(e) => Ok(UICommand::DisplayError(e)),
             },
             ReadResult::Warnings => Ok(UICommand::DisplayWarnings(self.loaded.clone())),
-            ReadResult::Edit => match self.edit(storage, terminal, editor) {
+            ReadResult::Edit => match self.edit(storage, app_screen, editor) {
                 Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
                 Err(e) => Ok(UICommand::DisplayError(e)),
             },
@@ -362,6 +297,85 @@ impl AppLogic for RealAppLogic<'_> {
                 Err(e) => Ok(UICommand::DisplayError(e)),
             },
         }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct LineBuilder {
+    spans: Vector<(String, Option<Style>)>,
+}
+
+impl LineBuilder {
+    fn new() -> Self {
+        Self { spans: vector!() }
+    }
+
+    fn from(text: String, style: Option<Style>) -> Self {
+        let mut builder = LineBuilder::new();
+        builder.spans.push_back((text, style));
+        builder
+    }
+
+    fn add_plain(&mut self, s: String) -> &mut Self {
+        self.spans.push_back((s, None));
+        self
+    }
+
+    fn add_styled(&mut self, s: String, style: Style) -> &mut Self {
+        self.spans.push_back((s, Some(style)));
+        self
+    }
+
+    fn build(&self) -> Line {
+        let spans: Vec<Span<'_>> = self
+            .spans
+            .iter()
+            .map(|(t, s)| match s {
+                Some(style) => Span::styled(t, *style),
+                None => Span::raw(t),
+            })
+            .collect();
+        Line::from(spans)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct ParagraphBuilder {
+    lines: Vector<LineBuilder>,
+}
+
+impl ParagraphBuilder {
+    fn new() -> Self {
+        Self { lines: vector!() }
+    }
+
+    fn add(&mut self, f: impl FnOnce(&mut LineBuilder)) -> &mut Self {
+        let mut builder = LineBuilder::new();
+        f(&mut builder);
+        self.add_line(builder)
+    }
+
+    fn add_line(&mut self, line: LineBuilder) -> &mut Self {
+        self.lines.push_back(line);
+        self
+    }
+
+    fn add_line_str(&mut self, text: String, style: Option<Style>) -> &mut Self {
+        self.add_line(LineBuilder::from(text, style))
+    }
+
+    fn build(&self) -> Paragraph {
+        let lines: Vec<Line> = self.lines.iter().map(|line| line.build()).collect();
+        Paragraph::new(lines)
+    }
+}
+
+impl Widget for ParagraphBuilder {
+    fn render(self, area: Rect, buf: &mut Buffer)
+    where
+        Self: Sized,
+    {
+        self.build().render(area, buf)
     }
 }
 
@@ -396,50 +410,114 @@ impl LoadedFile {
     }
 }
 
+enum Displayed {
+    Report(LoadedFile),
+    Warnings(LoadedFile),
+    Error(anyhow::Error),
+}
+
 fn ui_impl(
     filename: &str,
     dates: &dyn Fn() -> DateRange,
     menu: &mut Menu<ReadResult>,
-    terminal: &dyn Terminal,
+    app_input: &mut dyn AppInput,
+    app_screen: &mut dyn AppDisplay,
     editor: &mut dyn Editor,
     storage: &mut dyn Storage,
     logic: &mut dyn AppLogic,
 ) -> Result<()> {
-    terminal.start()?;
-    defer! {
-        _=terminal.stop();
-    }
-
+    let mut displayed = Displayed::Report(LoadedFile {
+        day_entries: vector!(),
+        warnings: vector!(),
+    });
     loop {
-        let outcome = logic.run(menu, terminal, storage, editor)?;
+        let outcome = logic.run(menu, app_input, app_screen, storage, editor)?;
         match outcome {
-            UICommand::Quit => {
-                terminal.clear()?;
-                return Ok(());
-            }
-            UICommand::DoNothing => {}
-            UICommand::Report(loaded) => {
-                print_file(&loaded, dates(), terminal, menu)?;
-            }
-            UICommand::UpdateMenu => {
-                display_menu(terminal, menu)?;
-            }
-            UICommand::DisplayWarnings(loaded) => {
-                print_warnings(&loaded, terminal, menu)?;
-            }
-            UICommand::DisplayError(error) => {
-                print_error(filename, error, terminal, menu)?;
-            }
+            UICommand::Quit => return Ok(()),
+            UICommand::DoNothing => continue,
+            UICommand::Report(loaded) => displayed = Displayed::Report(loaded),
+            UICommand::UpdateMenu => (),
+            UICommand::DisplayWarnings(loaded) => displayed = Displayed::Warnings(loaded),
+            UICommand::DisplayError(error) => displayed = Displayed::Error(error),
+        };
+        _ = match &displayed {
+            Displayed::Report(loaded_file) => app_screen.draw(&|screen_area| {
+                create_report_screen(screen_area, menu, filename, &loaded_file, dates())
+            })?,
+            Displayed::Warnings(loaded_file) => app_screen
+                .draw(&|screen_area| create_warnings_screen(screen_area, menu, &loaded_file))?,
+            Displayed::Error(error) => app_screen
+                .draw(&|screen_area| create_error_screen(screen_area, menu, filename, &error))?,
         }
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct Region {
+    paragraph: ParagraphBuilder,
+    area: Rect,
+}
+
+impl Region {
+    fn new(paragraph: ParagraphBuilder, area: Rect) -> Self {
+        Region { paragraph, area }
+    }
+}
+
+fn draw_screen(frame: &mut Frame, regions: &mut Vector<Region>) {
+    for region in regions.iter() {
+        frame.render_widget(region.paragraph.build(), region.area);
+    }
+}
+
+struct RealAppDisplay<T: Backend> {
+    terminal: Terminal<T>,
+}
+
+impl<T: Backend> AppDisplay for RealAppDisplay<T> {
+    fn clear(&mut self) -> Result<()> {
+        self.terminal
+            .clear()
+            .with_context(|| "failed to clear terminal")
+    }
+
+    fn draw(&mut self, region_factory: &dyn Fn(Rect) -> Vector<Region>) -> Result<()> {
+        self.terminal
+            .draw(|frame| {
+                let mut regions = region_factory(frame.area());
+                draw_screen(frame, &mut regions)
+            })
+            .with_context(|| "failed to draw terminal")
+            .map(|_| ())
+    }
+
+    fn pause(&mut self) -> Result<()> {
+        disable_raw_mode().with_context(|| "failed to disable raw mode")?;
+        self.terminal
+            .clear()
+            .with_context(|| "failed to clear terminal")
+    }
+
+    fn resume(&mut self) -> Result<()> {
+        enable_raw_mode().with_context(|| "failed to enable raw mode")?;
+        self.terminal
+            .clear()
+            .with_context(|| "failed to clear terminal")
+    }
+}
+
 pub fn watch_and_report(filename: &str, dates: &dyn Fn() -> DateRange) -> Result<()> {
+    let mut terminal = ratatui::init();
+    defer! {
+        ratatui::restore();
+    }
+
     ui_impl(
         filename,
         dates,
         &mut create_menu()?,
-        &RealTerminal {},
+        &mut RealAppInput::new(),
+        &mut RealAppDisplay { terminal },
         &mut RealEditor {},
         &mut RealStorage {},
         &mut RealAppLogic::new(filename),
@@ -461,72 +539,142 @@ fn create_menu() -> Result<Menu<ReadResult>> {
     Menu::new(menu_items)
 }
 
-fn display_menu(terminal: &dyn Terminal, menu: &Menu<ReadResult>) -> Result<()> {
-    terminal.goto(0, 0)?;
-    terminal.print_str(menu.render().as_str())?;
-    terminal.print_styled_str(menu.description().yellow())
+fn partition_string<'a>(s: &'a str, search_str: &str) -> Vec<&'a str> {
+    let search_str = search_str.to_lowercase().to_string();
+    for (c_index, c) in s.char_indices() {
+        if c.to_lowercase().to_string() == search_str {
+            let c_end_index = c_index + c.len_utf8();
+            return vec![&s[..c_index], &s[c_index..c_end_index], &s[c_end_index..]];
+        }
+    }
+    vec![s, "", ""]
 }
 
-fn print_error(
-    filename: &str,
-    error: anyhow::Error,
-    terminal: &dyn Terminal,
+fn menu_style(selected: bool) -> Style {
+    let color = if selected { Color::Red } else { Color::Blue };
+    Style::new().fg(color)
+}
+
+fn format_menu_label<T: Copy>(
+    menu_item: &MenuItem<T>,
+    selected: bool,
+    line_builder: &mut LineBuilder,
+) {
+    let parts = partition_string(menu_item.name(), &*menu_item.key().to_string());
+    for (index, s) in parts.iter().enumerate() {
+        if s.is_empty() {
+            continue;
+        }
+        let mut style = menu_style(selected);
+        if index == 1 {
+            style = style.add_modifier(Modifier::BOLD);
+        }
+        line_builder.add_styled(s.to_string(), style);
+    }
+}
+
+fn format_menu<T: Copy>(menu: &Menu<T>) -> ParagraphBuilder {
+    let mut choices = LineBuilder::new();
+    for (index, item) in menu.items().iter().enumerate() {
+        format_menu_label(item, index == *menu.selected_index(), &mut choices);
+    }
+    let mut builder = ParagraphBuilder::new();
+    builder
+        .add_line(choices)
+        .add_line_str(menu.description().to_string(), Some(menu_style(true)));
+    builder
+}
+
+fn format_warnings_summary(file: &LoadedFile) -> Paragraph {
+    let text = match file.warnings.len() {
+        0 => String::new(),
+        1 => file.warnings.get(0).unwrap().clone(),
+        _ => format!("There are {} warnings.", file.warnings.len()),
+    };
+    let span = Span::styled(text, Style::new().fg(Color::Red));
+    Paragraph::new(span)
+}
+
+fn format_warnings(file: &LoadedFile) -> ParagraphBuilder {
+    let mut builder = ParagraphBuilder::new();
+    if file.warnings.is_empty() {
+        builder.add_line_str("There are no warnings to display.".to_string(), None);
+    } else {
+        let style = Some(Style::new().fg(Color::Red));
+        for warning in file.warnings.iter() {
+            builder.add_line_str(format!("warning: {}", warning), style);
+        }
+    }
+    builder
+}
+
+fn format_report(file: &LoadedFile, dates: DateRange) -> Result<ParagraphBuilder> {
+    let mut builder = ParagraphBuilder::new();
+    for line in report::create_report(dates, &file.day_entries)? {
+        builder.add_line_str(line, None);
+    }
+    Ok(builder)
+}
+
+fn format_error(filename: &str, error: &anyhow::Error) -> ParagraphBuilder {
+    let style = Some(Style::new().fg(Color::Red));
+    let mut builder = ParagraphBuilder::new();
+    builder.add_line_str(error.to_string(), style);
+    builder.add_line_str(format!("   filename: {}", filename), style);
+    builder.add_line_str(format!("    message: {:?}", error), style);
+    builder
+}
+
+fn create_warnings_screen(
+    screen_area: Rect,
     menu: &Menu<ReadResult>,
-) -> Result<()> {
-    terminal.clear()?;
-    display_menu(terminal, menu)?;
-    terminal.goto(3, 0)?;
-    terminal.print_styled_str("error:".red())?;
-    terminal.print_styled_string(format!("   filename: {}", filename).red())?;
-    terminal.print_styled_string(format!("    message: {:?}", error).red())
+    file: &LoadedFile,
+) -> Vector<Region> {
+    use Constraint::{Length, Min};
+    let vertical = Layout::vertical([Length(2), Min(0)]);
+    let [menu_area, warnings_area] = vertical.areas(screen_area);
+    vector!(
+        Region::new(format_menu(menu), menu_area),
+        Region::new(format_warnings(file), warnings_area)
+    )
 }
 
-fn print_file(
+fn create_error_screen(
+    screen_area: Rect,
+    menu: &Menu<ReadResult>,
+    filename: &str,
+    error: &anyhow::Error,
+) -> Vector<Region> {
+    use Constraint::{Length, Min};
+    // let vertical = Layout::vertical([Length(2), Min(0), Length(1)]);
+    // let [menu_area, report_area, warnings_area] = vertical.areas(frame.area());
+    let vertical = Layout::vertical([Length(2), Min(0)]);
+    let [menu_area, error_area] = vertical.areas(screen_area);
+    vector!(
+        Region::new(format_menu(menu), menu_area),
+        Region::new(format_error(filename, &error), error_area)
+    )
+}
+
+fn create_report_screen(
+    screen_area: Rect,
+    menu: &Menu<ReadResult>,
+    filename: &str,
     file: &LoadedFile,
     dates: DateRange,
-    terminal: &dyn Terminal,
-    menu: &Menu<ReadResult>,
-) -> Result<()> {
-    terminal.clear()?;
-    display_menu(terminal, menu)?;
-    terminal.goto(3, 0)?;
-    match file.warnings.len() {
-        0 => (),
-        1 => {
-            terminal
-                .print_styled_string(format!("warning: {}", file.warnings[0].as_str()).red())?;
-            terminal.print_str("")?;
-        }
-        _ => {
-            terminal.print_styled_string(
-                format!("There are {} warnings.", file.warnings.len()).red(),
-            )?;
-            terminal.print_str("")?;
-        }
-    }
-    let lines = report::create_report(dates, &file.day_entries)?;
-    for line in lines {
-        terminal.print_str(line.as_str())?;
-    }
-    Ok(())
-}
-
-fn print_warnings(
-    file: &LoadedFile,
-    terminal: &dyn Terminal,
-    menu: &Menu<ReadResult>,
-) -> Result<()> {
-    terminal.clear()?;
-    display_menu(terminal, menu)?;
-    terminal.goto(3, 0)?;
-    if file.warnings.is_empty() {
-        terminal.print_str("There are no warnings to display.")?;
-    } else {
-        for warning in &file.warnings {
-            terminal.print_styled_string(format!("warning: {}", warning.as_str()).red())?;
-        }
-    }
-    Ok(())
+) -> Vector<Region> {
+    let report = match format_report(file, dates) {
+        Ok(r) => r,
+        Err(e) => return create_error_screen(screen_area, menu, filename, &e),
+    };
+    use Constraint::{Length, Min};
+    let vertical = Layout::vertical([Length(2), Min(0), Length(1)]);
+    let [menu_area, report_area, warnings_area] = vertical.areas(screen_area);
+    vector!(
+        Region::new(format_menu(menu), menu_area),
+        Region::new(report, report_area),
+        Region::new(format_warnings(file), warnings_area)
+    )
 }
 
 fn get_editor() -> String {
