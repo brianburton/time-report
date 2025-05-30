@@ -342,11 +342,15 @@ impl LineBuilder {
 #[derive(Debug, Clone, PartialEq)]
 struct ParagraphBuilder {
     lines: Vector<LineBuilder>,
+    border: Option<String>,
 }
 
 impl ParagraphBuilder {
     fn new() -> Self {
-        Self { lines: vector!() }
+        Self {
+            lines: vector!(),
+            border: None,
+        }
     }
 
     fn add(&mut self, f: impl FnOnce(&mut LineBuilder)) -> &mut Self {
@@ -364,9 +368,24 @@ impl ParagraphBuilder {
         self.add_line(LineBuilder::from(text, style))
     }
 
+    fn bordered(&mut self) -> &mut Self {
+        self.border = Some(String::new());
+        self
+    }
+
+    fn titled(&mut self, title: String) -> &mut Self {
+        self.border = Some(title);
+        self
+    }
+
     fn build(&self) -> Paragraph {
         let lines: Vec<Line> = self.lines.iter().map(|line| line.build()).collect();
-        Paragraph::new(lines)
+        let mut para = Paragraph::new(lines);
+        match (&self.border) {
+            Some(title) if title.is_empty() => para.block(Block::bordered()),
+            Some(title) => para.block(Block::bordered().title(title.to_string())),
+            None => para,
+        }
     }
 }
 
@@ -568,9 +587,12 @@ fn format_menu_label<T: Copy>(
         let mut style = menu_style(selected);
         if index == 1 {
             style = style.add_modifier(Modifier::BOLD);
+            line_builder.add_styled(format!("({})", s), style);
+        } else {
+            line_builder.add_styled(s.to_string(), style);
         }
-        line_builder.add_styled(s.to_string(), style);
     }
+    line_builder.add_plain("   ".to_string());
 }
 
 fn format_menu<T: Copy>(menu: &Menu<T>) -> ParagraphBuilder {
@@ -581,18 +603,26 @@ fn format_menu<T: Copy>(menu: &Menu<T>) -> ParagraphBuilder {
     let mut builder = ParagraphBuilder::new();
     builder
         .add_line(choices)
-        .add_line_str(menu.description().to_string(), Some(menu_style(true)));
+        .add_line_str(menu.description().to_string(), Some(menu_style(true)))
+        .bordered();
     builder
 }
 
-fn format_warnings_summary(file: &LoadedFile) -> Paragraph {
+const MENU_HEIGHT: u16 = 4;
+const WARNING_HEIGHT: u16 = 3;
+
+fn format_warnings_summary(file: &LoadedFile) -> ParagraphBuilder {
+    let style = Some(Style::new().fg(Color::Red));
     let text = match file.warnings.len() {
         0 => String::new(),
         1 => file.warnings.get(0).unwrap().clone(),
         _ => format!("There are {} warnings.", file.warnings.len()),
     };
-    let span = Span::styled(text, Style::new().fg(Color::Red));
-    Paragraph::new(span)
+    let mut builder = ParagraphBuilder::new();
+    builder
+        .add_line_str(text, style)
+        .titled("Warnings".to_string());
+    builder
 }
 
 fn format_warnings(file: &LoadedFile) -> ParagraphBuilder {
@@ -605,6 +635,7 @@ fn format_warnings(file: &LoadedFile) -> ParagraphBuilder {
             builder.add_line_str(format!("warning: {}", warning), style);
         }
     }
+    builder.bordered();
     builder
 }
 
@@ -613,15 +644,28 @@ fn format_report(file: &LoadedFile, dates: DateRange) -> Result<ParagraphBuilder
     for line in report::create_report(dates, &file.day_entries)? {
         builder.add_line_str(line, None);
     }
+    builder.titled("Report".to_string());
     Ok(builder)
 }
 
 fn format_error(filename: &str, error: &anyhow::Error) -> ParagraphBuilder {
     let style = Some(Style::new().fg(Color::Red));
+    let lines = format!("{:?}", error)
+        .lines()
+        .map(|s| s.to_string())
+        .collect::<Vec<_>>();
     let mut builder = ParagraphBuilder::new();
-    builder.add_line_str(error.to_string(), style);
     builder.add_line_str(format!("   filename: {}", filename), style);
-    builder.add_line_str(format!("    message: {:?}", error), style);
+    builder.add_line_str(
+        format!(
+            "    message: {:?}",
+            lines.first().map(|s| s.as_ref()).unwrap_or("")
+        ),
+        style,
+    );
+    for line in lines.iter().skip(1) {
+        builder.add_line_str(format!("           : {}", line), style);
+    }
     builder
 }
 
@@ -631,7 +675,7 @@ fn create_warnings_screen(
     file: &LoadedFile,
 ) -> Vector<Region> {
     use Constraint::{Length, Min};
-    let vertical = Layout::vertical([Length(2), Min(0)]);
+    let vertical = Layout::vertical([Length(MENU_HEIGHT), Min(0)]);
     let [menu_area, warnings_area] = vertical.areas(screen_area);
     vector!(
         Region::new(format_menu(menu), menu_area),
@@ -646,9 +690,7 @@ fn create_error_screen(
     error: &anyhow::Error,
 ) -> Vector<Region> {
     use Constraint::{Length, Min};
-    // let vertical = Layout::vertical([Length(2), Min(0), Length(1)]);
-    // let [menu_area, report_area, warnings_area] = vertical.areas(frame.area());
-    let vertical = Layout::vertical([Length(2), Min(0)]);
+    let vertical = Layout::vertical([Length(MENU_HEIGHT), Min(0)]);
     let [menu_area, error_area] = vertical.areas(screen_area);
     vector!(
         Region::new(format_menu(menu), menu_area),
@@ -668,13 +710,22 @@ fn create_report_screen(
         Err(e) => return create_error_screen(screen_area, menu, filename, &e),
     };
     use Constraint::{Length, Min};
-    let vertical = Layout::vertical([Length(2), Min(0), Length(1)]);
-    let [menu_area, report_area, warnings_area] = vertical.areas(screen_area);
-    vector!(
-        Region::new(format_menu(menu), menu_area),
-        Region::new(report, report_area),
-        Region::new(format_warnings(file), warnings_area)
-    )
+    if file.warnings().is_empty() {
+        let vertical = Layout::vertical([Length(MENU_HEIGHT), Min(0)]);
+        let [menu_area, report_area] = vertical.areas(screen_area);
+        vector!(
+            Region::new(format_menu(menu), menu_area),
+            Region::new(report, report_area),
+        )
+    } else {
+        let vertical = Layout::vertical([Length(MENU_HEIGHT), Min(0), Length(WARNING_HEIGHT)]);
+        let [menu_area, report_area, warnings_area] = vertical.areas(screen_area);
+        vector!(
+            Region::new(format_menu(menu), menu_area),
+            Region::new(report, report_area),
+            Region::new(format_warnings_summary(file), warnings_area)
+        )
+    }
 }
 
 fn get_editor() -> String {
