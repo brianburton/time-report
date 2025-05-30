@@ -25,6 +25,22 @@ use std::fs;
 use std::process::Command;
 use std::time::{Duration, SystemTime};
 
+pub fn watch_and_report(filename: &str, dates: &dyn Fn() -> DateRange) -> Result<()> {
+    let terminal = ratatui::init();
+    defer! {
+        ratatui::restore();
+    }
+
+    let mut app_state = WatchApp {
+        menu: &mut create_menu()?,
+        app_input: &mut RealAppInput::new(),
+        app_screen: &mut RealAppDisplay { terminal },
+        editor: &mut RealEditor {},
+        storage: &mut RealStorage {},
+    };
+    app_state.run(filename, dates, &mut RealAppLogic::new(filename))
+}
+
 enum RawReadResult {
     Char(char),
     Enter,
@@ -69,14 +85,7 @@ trait Storage {
 }
 
 trait AppLogic {
-    fn run(
-        &mut self,
-        menu: &mut Menu<ReadResult>,
-        app_input: &mut dyn AppInput,
-        app_screen: &mut dyn AppDisplay,
-        storage: &mut dyn Storage,
-        editor: &mut dyn Editor,
-    ) -> Result<UICommand>;
+    fn run(&mut self, app_state: &mut WatchApp) -> Result<UICommand>;
 }
 
 trait Editor {
@@ -249,39 +258,34 @@ impl<'a> RealAppLogic<'a> {
 }
 
 impl AppLogic for RealAppLogic<'_> {
-    fn run(
-        &mut self,
-        menu: &mut Menu<ReadResult>,
-        app_input: &mut dyn AppInput,
-        app_screen: &mut dyn AppDisplay,
-        storage: &mut dyn Storage,
-        editor: &mut dyn Editor,
-    ) -> Result<UICommand> {
-        match self.read(menu, app_input)? {
+    fn run(&mut self, app_state: &mut WatchApp) -> Result<UICommand> {
+        match self.read(app_state.menu, app_state.app_input)? {
             ReadResult::Quit => Ok(UICommand::Quit),
-            ReadResult::Reload => match self.load(storage, true) {
+            ReadResult::Reload => match self.load(app_state.storage, true) {
                 Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
                 Err(e) => Ok(UICommand::DisplayError(e)),
             },
             ReadResult::Warnings => Ok(UICommand::DisplayWarnings(self.loaded.clone())),
-            ReadResult::Edit => match self.edit(storage, app_screen, editor) {
-                Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
-                Err(e) => Ok(UICommand::DisplayError(e)),
-            },
-            ReadResult::Append => match self.append(storage) {
+            ReadResult::Edit => {
+                match self.edit(app_state.storage, app_state.app_screen, app_state.editor) {
+                    Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
+                    Err(e) => Ok(UICommand::DisplayError(e)),
+                }
+            }
+            ReadResult::Append => match self.append(app_state.storage) {
                 Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
                 Err(e) => Ok(UICommand::DisplayError(e)),
             },
             ReadResult::Left => {
-                menu.left();
+                app_state.menu.left();
                 Ok(UICommand::UpdateMenu)
             }
             ReadResult::Right => {
-                menu.right();
+                app_state.menu.right();
                 Ok(UICommand::UpdateMenu)
             }
             ReadResult::Resized => Ok(UICommand::Report(self.loaded.clone())),
-            ReadResult::Timeout => match self.load(storage, false) {
+            ReadResult::Timeout => match self.load(app_state.storage, false) {
                 Ok((true, loaded)) => Ok(UICommand::Report(loaded)),
                 Ok((false, _)) => Ok(UICommand::DoNothing),
                 Err(e) => Ok(UICommand::DisplayError(e)),
@@ -419,38 +423,46 @@ enum Displayed {
     Error(anyhow::Error),
 }
 
-fn ui_impl(
-    filename: &str,
-    dates: &dyn Fn() -> DateRange,
-    menu: &mut Menu<ReadResult>,
-    app_input: &mut dyn AppInput,
-    app_screen: &mut dyn AppDisplay,
-    editor: &mut dyn Editor,
-    storage: &mut dyn Storage,
-    logic: &mut dyn AppLogic,
-) -> Result<()> {
-    let mut displayed = Displayed::Report(LoadedFile {
-        day_entries: vector!(),
-        warnings: vector!(),
-    });
-    loop {
-        let outcome = logic.run(menu, app_input, app_screen, storage, editor)?;
-        match outcome {
-            UICommand::Quit => return Ok(()),
-            UICommand::DoNothing => continue,
-            UICommand::Report(loaded) => displayed = Displayed::Report(loaded),
-            UICommand::UpdateMenu => (),
-            UICommand::DisplayWarnings(loaded) => displayed = Displayed::Warnings(loaded),
-            UICommand::DisplayError(error) => displayed = Displayed::Error(error),
-        };
-        match &displayed {
-            Displayed::Report(loaded_file) => app_screen.draw(&|screen_area| {
-                create_report_screen(screen_area, menu, filename, loaded_file, dates())
-            })?,
-            Displayed::Warnings(loaded_file) => app_screen
-                .draw(&|screen_area| create_warnings_screen(screen_area, menu, loaded_file))?,
-            Displayed::Error(error) => app_screen
-                .draw(&|screen_area| create_error_screen(screen_area, menu, filename, error))?,
+struct WatchApp<'a> {
+    menu: &'a mut Menu<ReadResult>,
+    app_input: &'a mut dyn AppInput,
+    app_screen: &'a mut dyn AppDisplay,
+    storage: &'a mut dyn Storage,
+    editor: &'a mut dyn Editor,
+}
+
+impl<'a> WatchApp<'a> {
+    fn run(
+        &mut self,
+        filename: &str,
+        dates: &dyn Fn() -> DateRange,
+        logic: &mut dyn AppLogic,
+    ) -> Result<()> {
+        let mut displayed = Displayed::Report(LoadedFile {
+            day_entries: vector!(),
+            warnings: vector!(),
+        });
+        loop {
+            let outcome = logic.run(self)?;
+            match outcome {
+                UICommand::Quit => return Ok(()),
+                UICommand::DoNothing => continue,
+                UICommand::Report(loaded) => displayed = Displayed::Report(loaded),
+                UICommand::UpdateMenu => (),
+                UICommand::DisplayWarnings(loaded) => displayed = Displayed::Warnings(loaded),
+                UICommand::DisplayError(error) => displayed = Displayed::Error(error),
+            };
+            match &displayed {
+                Displayed::Report(loaded_file) => self.app_screen.draw(&|screen_area| {
+                    create_report_screen(screen_area, self.menu, filename, loaded_file, dates())
+                })?,
+                Displayed::Warnings(loaded_file) => self.app_screen.draw(&|screen_area| {
+                    create_warnings_screen(screen_area, self.menu, loaded_file)
+                })?,
+                Displayed::Error(error) => self.app_screen.draw(&|screen_area| {
+                    create_error_screen(screen_area, self.menu, filename, error)
+                })?,
+            }
         }
     }
 }
@@ -501,24 +513,6 @@ impl<T: Backend> AppDisplay for RealAppDisplay<T> {
             .clear()
             .with_context(|| "failed to clear terminal")
     }
-}
-
-pub fn watch_and_report(filename: &str, dates: &dyn Fn() -> DateRange) -> Result<()> {
-    let terminal = ratatui::init();
-    defer! {
-        ratatui::restore();
-    }
-
-    ui_impl(
-        filename,
-        dates,
-        &mut create_menu()?,
-        &mut RealAppInput::new(),
-        &mut RealAppDisplay { terminal },
-        &mut RealEditor {},
-        &mut RealStorage {},
-        &mut RealAppLogic::new(filename),
-    )
 }
 
 fn create_menu() -> Result<Menu<ReadResult>> {
