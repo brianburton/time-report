@@ -32,14 +32,12 @@ pub fn watch_and_report(filename: &str, dates: &dyn Fn() -> DateRange) -> Result
     }
 
     let mut menu = create_menu()?;
-    let mut app_input = RealAppInput {};
-    let mut app_display = RealAppDisplay { terminal };
+    let mut app_display = RealAppScreen { terminal };
     let mut storage = RealStorage {};
     let mut editor = RealEditor {};
     let mut app_state = WatchApp::new(
         filename,
         &mut menu,
-        &mut app_input,
         &mut app_display,
         &mut storage,
         &mut editor,
@@ -69,11 +67,8 @@ enum ReadResult {
     Timeout,
 }
 
-trait AppInput {
+trait AppScreen {
     fn read(&self, timeout: Duration) -> Result<RawReadResult>;
-}
-
-trait AppDisplay {
     fn draw(&mut self, region_factory: &dyn Fn(Rect) -> Vector<Region>) -> Result<()>;
     fn pause(&mut self) -> Result<()>;
     fn resume(&mut self) -> Result<()>;
@@ -92,27 +87,6 @@ trait Storage {
 
 trait Editor {
     fn edit_file(&self, filename: &str, line_number: u32) -> Result<()>;
-}
-
-struct RealAppInput {}
-impl AppInput for RealAppInput {
-    fn read(&self, timeout: Duration) -> Result<RawReadResult> {
-        let error_context = "RealTerminal.read";
-        while poll(timeout).with_context(|| format!("{}: poll", error_context))? {
-            match read().with_context(|| format!("{}: read", error_context))? {
-                Event::Key(event) => match event.code {
-                    KeyCode::Char(c) => return Ok(RawReadResult::Char(c)),
-                    KeyCode::Enter => return Ok(RawReadResult::Enter),
-                    KeyCode::Left => return Ok(RawReadResult::Left),
-                    KeyCode::Right => return Ok(RawReadResult::Right),
-                    _ => {}
-                },
-                Event::Resize(_, _) => return Ok(RawReadResult::Resized),
-                _ => {}
-            }
-        }
-        Ok(RawReadResult::Timeout)
-    }
 }
 
 struct RealStorage {}
@@ -305,8 +279,7 @@ struct WatchApp<'a> {
     read_timeout: Duration,
     update_delay_millis: u128,
     menu: &'a mut Menu<ReadResult>,
-    app_input: &'a mut dyn AppInput,
-    app_screen: &'a mut dyn AppDisplay,
+    app_screen: &'a mut dyn AppScreen,
     storage: &'a mut dyn Storage,
     editor: &'a mut dyn Editor,
 }
@@ -315,8 +288,7 @@ impl<'a> WatchApp<'a> {
     fn new(
         filename: &'a str,
         menu: &'a mut Menu<ReadResult>,
-        app_input: &'a mut dyn AppInput,
-        app_screen: &'a mut dyn AppDisplay,
+        app_screen: &'a mut dyn AppScreen,
         storage: &'a mut dyn Storage,
         editor: &'a mut dyn Editor,
     ) -> WatchApp<'a> {
@@ -327,7 +299,6 @@ impl<'a> WatchApp<'a> {
             update_delay_millis: 500,
             read_timeout: Duration::from_millis(100),
             menu,
-            app_input,
             app_screen,
             storage,
             editor,
@@ -406,7 +377,7 @@ impl<'a> WatchApp<'a> {
 
     fn read(&mut self) -> Result<ReadResult> {
         loop {
-            match self.app_input.read(self.read_timeout)? {
+            match self.app_screen.read(self.read_timeout)? {
                 RawReadResult::Char(c) => match self.menu.select(c) {
                     Some(x) => return Ok(x),
                     None => continue,
@@ -484,11 +455,29 @@ fn draw_screen(frame: &mut Frame, regions: &mut Vector<Region>) {
     }
 }
 
-struct RealAppDisplay<T: Backend> {
+struct RealAppScreen<T: Backend> {
     terminal: Terminal<T>,
 }
 
-impl<T: Backend> AppDisplay for RealAppDisplay<T> {
+impl<T: Backend> AppScreen for RealAppScreen<T> {
+    fn read(&self, timeout: Duration) -> Result<RawReadResult> {
+        let error_context = "RealTerminal.read";
+        while poll(timeout).with_context(|| format!("{}: poll", error_context))? {
+            match read().with_context(|| format!("{}: read", error_context))? {
+                Event::Key(event) => match event.code {
+                    KeyCode::Char(c) => return Ok(RawReadResult::Char(c)),
+                    KeyCode::Enter => return Ok(RawReadResult::Enter),
+                    KeyCode::Left => return Ok(RawReadResult::Left),
+                    KeyCode::Right => return Ok(RawReadResult::Right),
+                    _ => {}
+                },
+                Event::Resize(_, _) => return Ok(RawReadResult::Resized),
+                _ => {}
+            }
+        }
+        Ok(RawReadResult::Timeout)
+    }
+
     fn draw(&mut self, region_factory: &dyn Fn(Rect) -> Vector<Region>) -> Result<()> {
         self.terminal
             .draw(|frame| {
