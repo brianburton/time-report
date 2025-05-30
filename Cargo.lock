@@ -393,15 +393,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "itertools"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
-dependencies = [
- "either",
-]
-
-[[package]]
 name = "itoa"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -623,7 +614,7 @@ dependencies = [
  "crossterm 0.28.1",
  "indoc",
  "instability",
- "itertools 0.13.0",
+ "itertools",
  "lru",
  "paste",
  "strum",
@@ -812,42 +803,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "thiserror"
-version = "2.0.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "567b8a2dae586314f7be2a752ec7474332959c6460e02bde30d702a66d488708"
-dependencies = [
- "thiserror-impl",
-]
-
-[[package]]
-name = "thiserror-impl"
-version = "2.0.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f7cf42b4507d8ea322120659672cf1b9dbb93f8f2d4ecfd6e51350ff5b17a1d"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "time-report"
-version = "1.3.1"
+version = "1.4.0"
 dependencies = [
  "anyhow",
  "chrono",
  "crossterm 0.29.0",
  "derive-getters",
  "im",
- "itertools 0.14.0",
  "lazy_static",
- "log",
  "rand",
  "ratatui",
  "regex",
  "scopeguard",
- "thiserror",
 ]
 
 [[package]]
@@ -874,7 +842,7 @@ version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b3644627a5af5fa321c95b9b235a72fd24cd29c648c2c379431e6628655627bf"
 dependencies = [
- "itertools 0.13.0",
+ "itertools",
  "unicode-segmentation",
  "unicode-width 0.1.14",
 ]
