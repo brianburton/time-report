@@ -1,6 +1,5 @@
 use anyhow::Result;
 use anyhow::anyhow;
-use crossterm::style::Stylize;
 use derive_getters::Getters;
 use im::Vector;
 
@@ -21,21 +20,6 @@ impl<T: Clone + Copy> MenuItem<T> {
             key,
             value,
         }
-    }
-
-    fn render(&self, first: bool, selected: bool) -> String {
-        let mut text = format!(
-            "{}({}){} ",
-            if first { "" } else { " " },
-            self.name.get(..1).unwrap(),
-            self.name.get(1..).unwrap_or("")
-        );
-        if selected {
-            text = text.dark_red().to_string();
-        } else {
-            text = text.dark_blue().to_string();
-        }
-        text
     }
 }
 
@@ -65,17 +49,6 @@ impl<T: Clone + Copy> Menu<T> {
             }
         }
         None
-    }
-
-    pub fn render(&self) -> String {
-        let mut text = String::new();
-        for (i, item) in self.items.iter().enumerate() {
-            if i > 0 {
-                text += "    ";
-            }
-            text += item.render(i == 0, i == self.selected_index).as_ref();
-        }
-        text
     }
 
     pub fn left(&mut self) {
@@ -120,11 +93,6 @@ mod tests {
         assert_eq!(item.name, "Append");
         assert_eq!(item.description, "Add current date to the file.");
         assert_eq!(item.key, 'a');
-        assert_eq!(item.render(true, true), "(A)ppend ".dark_red().to_string());
-        assert_eq!(
-            item.render(false, false),
-            " (A)ppend ".dark_blue().to_string(),
-        );
     }
 
     #[test]
@@ -137,15 +105,6 @@ mod tests {
         let mut menu = Menu::new(menu_items.clone()).unwrap();
         for i in 0..menu_items.len() {
             assert_eq!(menu.selected_index, i);
-            assert_eq!(
-                menu.render(),
-                format!(
-                    "{}    {}    {}",
-                    menu_items[0].render(true, menu.selected_index == 0),
-                    menu_items[1].render(false, menu.selected_index == 1),
-                    menu_items[2].render(false, menu.selected_index == 2)
-                )
-            );
             menu.right();
         }
         for i in (0..menu_items.len()).rev() {

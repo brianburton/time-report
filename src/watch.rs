@@ -1,8 +1,8 @@
 use ratatui::{
     Frame, Terminal,
     layout::{Constraint, Layout},
-    style::{Color, Modifier, Style, Stylize},
-    text::{Line, Span, Text},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
     widgets::{Block, Paragraph},
 };
 
@@ -11,25 +11,19 @@ use crate::model::{Date, DateRange, DayEntry, Project};
 use crate::report;
 use crate::{append, parse};
 use anyhow::{Context, Result, anyhow};
-use crossterm::cursor::{Hide, Show};
 use crossterm::event::KeyCode;
 use crossterm::event::{Event, poll, read};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
-use crossterm::{QueueableCommand, cursor, execute, style, terminal};
 use derive_getters::Getters;
 use im::{Vector, vector};
-use log::warn;
 use ratatui::buffer::Buffer;
 use ratatui::prelude::{Backend, Rect, Widget};
 use regex::Regex;
 use scopeguard::defer;
-use std::fmt::Display;
+use std::env;
 use std::fs;
-use std::fs::File;
-use std::io::{Stdout, Write, stdout};
 use std::process::Command;
 use std::time::{Duration, SystemTime};
-use std::{env, num::NonZero};
 
 enum RawReadResult {
     Char(char),
@@ -58,7 +52,6 @@ trait AppInput {
 }
 
 trait AppDisplay {
-    fn clear(&mut self) -> Result<()>;
     fn draw(&mut self, region_factory: &dyn Fn(Rect) -> Vector<Region>) -> Result<()>;
     fn pause(&mut self) -> Result<()>;
     fn resume(&mut self) -> Result<()>;
@@ -229,12 +222,9 @@ impl<'a> RealAppLogic<'a> {
             .map(|e| e.line_number())
             .unwrap_or(&0);
 
-        app_screen.pause();
-        // disable_raw_mode()?;
-        // terminal.clear()?;
+        _ = app_screen.pause();
         defer! {
-            // _=enable_raw_mode();
-            app_screen.resume();
+            _= app_screen.resume();
         }
 
         editor.edit_file(self.filename, *line_number)?;
@@ -353,12 +343,6 @@ impl ParagraphBuilder {
         }
     }
 
-    fn add(&mut self, f: impl FnOnce(&mut LineBuilder)) -> &mut Self {
-        let mut builder = LineBuilder::new();
-        f(&mut builder);
-        self.add_line(builder)
-    }
-
     fn add_line(&mut self, line: LineBuilder) -> &mut Self {
         self.lines.push_back(line);
         self
@@ -380,8 +364,8 @@ impl ParagraphBuilder {
 
     fn build(&self) -> Paragraph {
         let lines: Vec<Line> = self.lines.iter().map(|line| line.build()).collect();
-        let mut para = Paragraph::new(lines);
-        match (&self.border) {
+        let para = Paragraph::new(lines);
+        match &self.border {
             Some(title) if title.is_empty() => para.block(Block::bordered()),
             Some(title) => para.block(Block::bordered().title(title.to_string())),
             None => para,
@@ -459,14 +443,14 @@ fn ui_impl(
             UICommand::DisplayWarnings(loaded) => displayed = Displayed::Warnings(loaded),
             UICommand::DisplayError(error) => displayed = Displayed::Error(error),
         };
-        _ = match &displayed {
+        match &displayed {
             Displayed::Report(loaded_file) => app_screen.draw(&|screen_area| {
-                create_report_screen(screen_area, menu, filename, &loaded_file, dates())
+                create_report_screen(screen_area, menu, filename, loaded_file, dates())
             })?,
             Displayed::Warnings(loaded_file) => app_screen
-                .draw(&|screen_area| create_warnings_screen(screen_area, menu, &loaded_file))?,
+                .draw(&|screen_area| create_warnings_screen(screen_area, menu, loaded_file))?,
             Displayed::Error(error) => app_screen
-                .draw(&|screen_area| create_error_screen(screen_area, menu, filename, &error))?,
+                .draw(&|screen_area| create_error_screen(screen_area, menu, filename, error))?,
         }
     }
 }
@@ -494,12 +478,6 @@ struct RealAppDisplay<T: Backend> {
 }
 
 impl<T: Backend> AppDisplay for RealAppDisplay<T> {
-    fn clear(&mut self) -> Result<()> {
-        self.terminal
-            .clear()
-            .with_context(|| "failed to clear terminal")
-    }
-
     fn draw(&mut self, region_factory: &dyn Fn(Rect) -> Vector<Region>) -> Result<()> {
         self.terminal
             .draw(|frame| {
@@ -526,7 +504,7 @@ impl<T: Backend> AppDisplay for RealAppDisplay<T> {
 }
 
 pub fn watch_and_report(filename: &str, dates: &dyn Fn() -> DateRange) -> Result<()> {
-    let mut terminal = ratatui::init();
+    let terminal = ratatui::init();
     defer! {
         ratatui::restore();
     }
@@ -579,7 +557,7 @@ fn format_menu_label<T: Copy>(
     selected: bool,
     line_builder: &mut LineBuilder,
 ) {
-    let parts = partition_string(menu_item.name(), &*menu_item.key().to_string());
+    let parts = partition_string(menu_item.name(), &menu_item.key().to_string());
     for (index, s) in parts.iter().enumerate() {
         if s.is_empty() {
             continue;
@@ -694,7 +672,7 @@ fn create_error_screen(
     let [menu_area, error_area] = vertical.areas(screen_area);
     vector!(
         Region::new(format_menu(menu), menu_area),
-        Region::new(format_error(filename, &error), error_area)
+        Region::new(format_error(filename, error), error_area)
     )
 }
 
