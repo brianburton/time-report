@@ -31,14 +31,20 @@ pub fn watch_and_report(filename: &str, dates: &dyn Fn() -> DateRange) -> Result
         ratatui::restore();
     }
 
-    let mut app_state = WatchApp {
-        menu: &mut create_menu()?,
-        app_input: &mut RealAppInput::new(),
-        app_screen: &mut RealAppDisplay { terminal },
-        editor: &mut RealEditor {},
-        storage: &mut RealStorage {},
-    };
-    app_state.run(filename, dates, &mut RealAppLogic::new(filename))
+    let mut menu = create_menu()?;
+    let mut app_input = RealAppInput {};
+    let mut app_display = RealAppDisplay { terminal };
+    let mut storage = RealStorage {};
+    let mut editor = RealEditor {};
+    let mut app_state = WatchApp::new(
+        filename,
+        &mut menu,
+        &mut app_input,
+        &mut app_display,
+        &mut storage,
+        &mut editor,
+    );
+    app_state.run(dates)
 }
 
 enum RawReadResult {
@@ -84,21 +90,11 @@ trait Storage {
     ) -> Result<()>;
 }
 
-trait AppLogic {
-    fn run(&mut self, app_state: &mut WatchApp) -> Result<UICommand>;
-}
-
 trait Editor {
     fn edit_file(&self, filename: &str, line_number: u32) -> Result<()>;
 }
 
 struct RealAppInput {}
-impl RealAppInput {
-    fn new() -> Self {
-        Self {}
-    }
-}
-
 impl AppInput for RealAppInput {
     fn read(&self, timeout: Duration) -> Result<RawReadResult> {
         let error_context = "RealTerminal.read";
@@ -170,127 +166,6 @@ impl Editor for RealEditor {
             return Err(anyhow!("{}: editor command failed", error_context));
         }
         Ok(())
-    }
-}
-
-struct RealAppLogic<'a> {
-    filename: &'a str,
-    last_update_millis: u128,
-    loaded: LoadedFile,
-    read_timeout: Duration,
-    update_delay_millis: u128,
-}
-
-impl<'a> RealAppLogic<'a> {
-    fn new(filename: &'a str) -> RealAppLogic<'a> {
-        RealAppLogic {
-            filename,
-            loaded: LoadedFile::empty(),
-            last_update_millis: 0,
-            update_delay_millis: 500,
-            read_timeout: Duration::from_millis(100),
-        }
-    }
-
-    fn load(&mut self, storage: &mut dyn Storage, skip_delay: bool) -> Result<(bool, LoadedFile)> {
-        let current_file_millis = storage.timestamp(self.filename)?;
-        if current_file_millis == self.last_update_millis {
-            return Ok((false, self.loaded.clone()));
-        }
-        let next_update_millis = self.last_update_millis + self.update_delay_millis;
-        if current_file_millis < next_update_millis && !skip_delay {
-            return Ok((false, self.loaded.clone()));
-        }
-        self.last_update_millis = current_file_millis;
-        self.loaded = storage.load(self.filename)?;
-        Ok((true, self.loaded.clone()))
-    }
-
-    fn append(&mut self, storage: &mut dyn Storage) -> Result<(bool, LoadedFile)> {
-        self.load(storage, true)?;
-        let date = Date::today();
-        let day_entries = self.loaded.day_entries();
-        append::validate_date(day_entries, date)?;
-
-        let min_date = date.minus_days(30)?;
-        let recent_projects = append::recent_projects(day_entries, min_date, 5);
-        storage.append(self.filename, date, recent_projects)?;
-        self.load(storage, true)
-    }
-
-    fn edit(
-        &mut self,
-        storage: &mut dyn Storage,
-        app_screen: &mut dyn AppDisplay,
-        editor: &mut dyn Editor,
-    ) -> Result<(bool, LoadedFile)> {
-        let line_number = self
-            .loaded
-            .day_entries()
-            .last()
-            .map(|e| e.line_number())
-            .unwrap_or(&0);
-
-        _ = app_screen.pause();
-        defer! {
-            _= app_screen.resume();
-        }
-
-        editor.edit_file(self.filename, *line_number)?;
-        self.load(storage, true)
-    }
-
-    fn read(&mut self, menu: &mut Menu<ReadResult>, terminal: &dyn AppInput) -> Result<ReadResult> {
-        loop {
-            match terminal.read(self.read_timeout)? {
-                RawReadResult::Char(c) => match menu.select(c) {
-                    Some(x) => return Ok(x),
-                    None => continue,
-                },
-                RawReadResult::Enter => return Ok(menu.value()),
-                RawReadResult::Left => return Ok(ReadResult::Left),
-                RawReadResult::Right => return Ok(ReadResult::Right),
-                RawReadResult::Timeout => return Ok(ReadResult::Timeout),
-                RawReadResult::Resized => return Ok(ReadResult::Resized),
-            }
-        }
-    }
-}
-
-impl AppLogic for RealAppLogic<'_> {
-    fn run(&mut self, app_state: &mut WatchApp) -> Result<UICommand> {
-        match self.read(app_state.menu, app_state.app_input)? {
-            ReadResult::Quit => Ok(UICommand::Quit),
-            ReadResult::Reload => match self.load(app_state.storage, true) {
-                Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
-                Err(e) => Ok(UICommand::DisplayError(e)),
-            },
-            ReadResult::Warnings => Ok(UICommand::DisplayWarnings(self.loaded.clone())),
-            ReadResult::Edit => {
-                match self.edit(app_state.storage, app_state.app_screen, app_state.editor) {
-                    Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
-                    Err(e) => Ok(UICommand::DisplayError(e)),
-                }
-            }
-            ReadResult::Append => match self.append(app_state.storage) {
-                Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
-                Err(e) => Ok(UICommand::DisplayError(e)),
-            },
-            ReadResult::Left => {
-                app_state.menu.left();
-                Ok(UICommand::UpdateMenu)
-            }
-            ReadResult::Right => {
-                app_state.menu.right();
-                Ok(UICommand::UpdateMenu)
-            }
-            ReadResult::Resized => Ok(UICommand::Report(self.loaded.clone())),
-            ReadResult::Timeout => match self.load(app_state.storage, false) {
-                Ok((true, loaded)) => Ok(UICommand::Report(loaded)),
-                Ok((false, _)) => Ok(UICommand::DoNothing),
-                Err(e) => Ok(UICommand::DisplayError(e)),
-            },
-        }
     }
 }
 
@@ -424,6 +299,11 @@ enum Displayed {
 }
 
 struct WatchApp<'a> {
+    filename: &'a str,
+    last_update_millis: u128,
+    loaded: LoadedFile,
+    read_timeout: Duration,
+    update_delay_millis: u128,
     menu: &'a mut Menu<ReadResult>,
     app_input: &'a mut dyn AppInput,
     app_screen: &'a mut dyn AppDisplay,
@@ -432,18 +312,35 @@ struct WatchApp<'a> {
 }
 
 impl<'a> WatchApp<'a> {
-    fn run(
-        &mut self,
-        filename: &str,
-        dates: &dyn Fn() -> DateRange,
-        logic: &mut dyn AppLogic,
-    ) -> Result<()> {
+    fn new(
+        filename: &'a str,
+        menu: &'a mut Menu<ReadResult>,
+        app_input: &'a mut dyn AppInput,
+        app_screen: &'a mut dyn AppDisplay,
+        storage: &'a mut dyn Storage,
+        editor: &'a mut dyn Editor,
+    ) -> WatchApp<'a> {
+        WatchApp {
+            filename,
+            loaded: LoadedFile::empty(),
+            last_update_millis: 0,
+            update_delay_millis: 500,
+            read_timeout: Duration::from_millis(100),
+            menu,
+            app_input,
+            app_screen,
+            storage,
+            editor,
+        }
+    }
+
+    fn run(&mut self, dates: &dyn Fn() -> DateRange) -> Result<()> {
         let mut displayed = Displayed::Report(LoadedFile {
             day_entries: vector!(),
             warnings: vector!(),
         });
         loop {
-            let outcome = logic.run(self)?;
+            let outcome = self.run_once()?;
             match outcome {
                 UICommand::Quit => return Ok(()),
                 UICommand::DoNothing => continue,
@@ -452,18 +349,120 @@ impl<'a> WatchApp<'a> {
                 UICommand::DisplayWarnings(loaded) => displayed = Displayed::Warnings(loaded),
                 UICommand::DisplayError(error) => displayed = Displayed::Error(error),
             };
-            match &displayed {
-                Displayed::Report(loaded_file) => self.app_screen.draw(&|screen_area| {
-                    create_report_screen(screen_area, self.menu, filename, loaded_file, dates())
-                })?,
-                Displayed::Warnings(loaded_file) => self.app_screen.draw(&|screen_area| {
-                    create_warnings_screen(screen_area, self.menu, loaded_file)
-                })?,
-                Displayed::Error(error) => self.app_screen.draw(&|screen_area| {
-                    create_error_screen(screen_area, self.menu, filename, error)
-                })?,
+            self.update_screen(&displayed, dates)?;
+        }
+    }
+
+    fn update_screen(
+        &mut self,
+        displayed: &Displayed,
+        dates: &dyn Fn() -> DateRange,
+    ) -> Result<()> {
+        match displayed {
+            Displayed::Report(loaded_file) => self.app_screen.draw(&|screen_area| {
+                create_report_screen(screen_area, self.menu, self.filename, loaded_file, dates())
+            }),
+            Displayed::Warnings(loaded_file) => self
+                .app_screen
+                .draw(&|screen_area| create_warnings_screen(screen_area, self.menu, loaded_file)),
+            Displayed::Error(error) => self.app_screen.draw(&|screen_area| {
+                create_error_screen(screen_area, self.menu, self.filename, error)
+            }),
+        }
+    }
+
+    fn run_once(&mut self) -> Result<UICommand> {
+        match self.read()? {
+            ReadResult::Quit => Ok(UICommand::Quit),
+            ReadResult::Reload => match self.load(true) {
+                Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
+                Err(e) => Ok(UICommand::DisplayError(e)),
+            },
+            ReadResult::Warnings => Ok(UICommand::DisplayWarnings(self.loaded.clone())),
+            ReadResult::Edit => match self.edit() {
+                Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
+                Err(e) => Ok(UICommand::DisplayError(e)),
+            },
+            ReadResult::Append => match self.append() {
+                Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
+                Err(e) => Ok(UICommand::DisplayError(e)),
+            },
+            ReadResult::Left => {
+                self.menu.left();
+                Ok(UICommand::UpdateMenu)
+            }
+            ReadResult::Right => {
+                self.menu.right();
+                Ok(UICommand::UpdateMenu)
+            }
+            ReadResult::Resized => Ok(UICommand::Report(self.loaded.clone())),
+            ReadResult::Timeout => match self.load(false) {
+                Ok((true, loaded)) => Ok(UICommand::Report(loaded)),
+                Ok((false, _)) => Ok(UICommand::DoNothing),
+                Err(e) => Ok(UICommand::DisplayError(e)),
+            },
+        }
+    }
+
+    fn read(&mut self) -> Result<ReadResult> {
+        loop {
+            match self.app_input.read(self.read_timeout)? {
+                RawReadResult::Char(c) => match self.menu.select(c) {
+                    Some(x) => return Ok(x),
+                    None => continue,
+                },
+                RawReadResult::Enter => return Ok(self.menu.value()),
+                RawReadResult::Left => return Ok(ReadResult::Left),
+                RawReadResult::Right => return Ok(ReadResult::Right),
+                RawReadResult::Timeout => return Ok(ReadResult::Timeout),
+                RawReadResult::Resized => return Ok(ReadResult::Resized),
             }
         }
+    }
+
+    fn load(&mut self, skip_delay: bool) -> Result<(bool, LoadedFile)> {
+        let current_file_millis = self.storage.timestamp(self.filename)?;
+        if current_file_millis == self.last_update_millis {
+            return Ok((false, self.loaded.clone()));
+        }
+        let next_update_millis = self.last_update_millis + self.update_delay_millis;
+        if current_file_millis < next_update_millis && !skip_delay {
+            return Ok((false, self.loaded.clone()));
+        }
+        self.last_update_millis = current_file_millis;
+        self.loaded = self.storage.load(self.filename)?;
+        Ok((true, self.loaded.clone()))
+    }
+
+    fn append(&mut self) -> Result<(bool, LoadedFile)> {
+        self.load(true)?;
+        let date = Date::today();
+        let day_entries = self.loaded.day_entries();
+        append::validate_date(day_entries, date)?;
+
+        let min_date = date.minus_days(30)?;
+        let recent_projects = append::recent_projects(day_entries, min_date, 5);
+        self.storage.append(self.filename, date, recent_projects)?;
+        self.load(true)
+    }
+
+    fn edit(&mut self) -> Result<(bool, LoadedFile)> {
+        let line_number = self
+            .loaded
+            .day_entries()
+            .last()
+            .map(|e| e.line_number())
+            .unwrap_or(&0);
+
+        self.app_screen
+            .pause()
+            .with_context(|| "failed to pause to run editor")?;
+        let rc = self
+            .editor
+            .edit_file(self.filename, *line_number)
+            .and_then(|_| self.load(true));
+        _ = self.app_screen.resume();
+        rc
     }
 }
 
