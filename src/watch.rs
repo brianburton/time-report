@@ -1,5 +1,5 @@
 use ratatui::{
-    Frame, Terminal,
+    Terminal,
     layout::{Constraint, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
@@ -87,6 +87,56 @@ trait Storage {
 
 trait Editor {
     fn edit_file(&self, filename: &str, line_number: u32) -> Result<()>;
+}
+
+struct RealAppScreen<T: Backend> {
+    terminal: Terminal<T>,
+}
+
+impl<T: Backend> AppScreen for RealAppScreen<T> {
+    fn read(&self, timeout: Duration) -> Result<RawReadResult> {
+        let error_context = "RealTerminal.read";
+        while poll(timeout).with_context(|| format!("{}: poll", error_context))? {
+            match read().with_context(|| format!("{}: read", error_context))? {
+                Event::Key(event) => match event.code {
+                    KeyCode::Char(c) => return Ok(RawReadResult::Char(c)),
+                    KeyCode::Enter => return Ok(RawReadResult::Enter),
+                    KeyCode::Left => return Ok(RawReadResult::Left),
+                    KeyCode::Right => return Ok(RawReadResult::Right),
+                    _ => {}
+                },
+                Event::Resize(_, _) => return Ok(RawReadResult::Resized),
+                _ => {}
+            }
+        }
+        Ok(RawReadResult::Timeout)
+    }
+
+    fn draw(&mut self, region_factory: &dyn Fn(Rect) -> Vector<Region>) -> Result<()> {
+        self.terminal
+            .draw(|frame| {
+                let regions = region_factory(frame.area());
+                for region in regions.iter() {
+                    frame.render_widget(region.paragraph.build(), region.area);
+                }
+            })
+            .with_context(|| "failed to draw terminal")
+            .map(|_| ())
+    }
+
+    fn pause(&mut self) -> Result<()> {
+        disable_raw_mode().with_context(|| "failed to disable raw mode")?;
+        self.terminal
+            .clear()
+            .with_context(|| "failed to clear terminal")
+    }
+
+    fn resume(&mut self) -> Result<()> {
+        enable_raw_mode().with_context(|| "failed to enable raw mode")?;
+        self.terminal
+            .clear()
+            .with_context(|| "failed to clear terminal")
+    }
 }
 
 struct RealStorage {}
@@ -241,15 +291,6 @@ struct LoadedFile {
     warnings: Vector<String>,
 }
 
-enum UICommand {
-    DoNothing,
-    Quit,
-    Report(LoadedFile),
-    UpdateMenu,
-    DisplayWarnings(LoadedFile),
-    DisplayError(anyhow::Error),
-}
-
 impl LoadedFile {
     fn new(day_entries: &Vector<DayEntry>, warnings: &Vector<String>) -> Self {
         LoadedFile {
@@ -266,10 +307,31 @@ impl LoadedFile {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct Region {
+    paragraph: ParagraphBuilder,
+    area: Rect,
+}
+
+impl Region {
+    fn new(paragraph: ParagraphBuilder, area: Rect) -> Self {
+        Region { paragraph, area }
+    }
+}
+
 enum Displayed {
     Report(LoadedFile),
     Warnings(LoadedFile),
     Error(anyhow::Error),
+}
+
+enum UICommand {
+    DoNothing,
+    Quit,
+    Report(LoadedFile),
+    UpdateMenu,
+    DisplayWarnings(LoadedFile),
+    DisplayError(anyhow::Error),
 }
 
 struct WatchApp<'a> {
@@ -434,72 +496,6 @@ impl<'a> WatchApp<'a> {
             .and_then(|_| self.load(true));
         _ = self.app_screen.resume();
         rc
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct Region {
-    paragraph: ParagraphBuilder,
-    area: Rect,
-}
-
-impl Region {
-    fn new(paragraph: ParagraphBuilder, area: Rect) -> Self {
-        Region { paragraph, area }
-    }
-}
-
-fn draw_screen(frame: &mut Frame, regions: &mut Vector<Region>) {
-    for region in regions.iter() {
-        frame.render_widget(region.paragraph.build(), region.area);
-    }
-}
-
-struct RealAppScreen<T: Backend> {
-    terminal: Terminal<T>,
-}
-
-impl<T: Backend> AppScreen for RealAppScreen<T> {
-    fn read(&self, timeout: Duration) -> Result<RawReadResult> {
-        let error_context = "RealTerminal.read";
-        while poll(timeout).with_context(|| format!("{}: poll", error_context))? {
-            match read().with_context(|| format!("{}: read", error_context))? {
-                Event::Key(event) => match event.code {
-                    KeyCode::Char(c) => return Ok(RawReadResult::Char(c)),
-                    KeyCode::Enter => return Ok(RawReadResult::Enter),
-                    KeyCode::Left => return Ok(RawReadResult::Left),
-                    KeyCode::Right => return Ok(RawReadResult::Right),
-                    _ => {}
-                },
-                Event::Resize(_, _) => return Ok(RawReadResult::Resized),
-                _ => {}
-            }
-        }
-        Ok(RawReadResult::Timeout)
-    }
-
-    fn draw(&mut self, region_factory: &dyn Fn(Rect) -> Vector<Region>) -> Result<()> {
-        self.terminal
-            .draw(|frame| {
-                let mut regions = region_factory(frame.area());
-                draw_screen(frame, &mut regions)
-            })
-            .with_context(|| "failed to draw terminal")
-            .map(|_| ())
-    }
-
-    fn pause(&mut self) -> Result<()> {
-        disable_raw_mode().with_context(|| "failed to disable raw mode")?;
-        self.terminal
-            .clear()
-            .with_context(|| "failed to clear terminal")
-    }
-
-    fn resume(&mut self) -> Result<()> {
-        enable_raw_mode().with_context(|| "failed to enable raw mode")?;
-        self.terminal
-            .clear()
-            .with_context(|| "failed to clear terminal")
     }
 }
 
