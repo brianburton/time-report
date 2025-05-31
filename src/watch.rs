@@ -415,65 +415,36 @@ impl<'a> WatchApp<'a> {
 
 fn create_menu() -> Result<Menu<ReadResult>> {
     let menu_items = vector!(
-        MenuItem::new(ReadResult::Edit, "Edit", "Edit the file."),
+        MenuItem::new(ReadResult::Edit, "Edit", "Edit the file.", 'e'),
         MenuItem::new(
             ReadResult::Append,
             "Append",
-            "Add current date to the file."
+            "Add current date to the file.",
+            'a'
         ),
-        MenuItem::new(ReadResult::Reload, "Reload", "Reload file."),
-        MenuItem::new(ReadResult::Warnings, "Warnings", "Display warnings."),
-        MenuItem::new(ReadResult::Quit, "Quit", "Quit the program.")
+        MenuItem::new(ReadResult::Reload, "Reload", "Reload file.", 'r'),
+        MenuItem::new(ReadResult::Warnings, "Warnings", "Display warnings.", 'w'),
+        MenuItem::new(ReadResult::Quit, "Quit", "Quit the program.", 'q')
     );
     Menu::new(menu_items)
 }
 
-fn partition_string<'a>(s: &'a str, search_str: &str) -> Vec<&'a str> {
-    let search_str = search_str.to_lowercase().to_string();
-    for (c_index, c) in s.char_indices() {
-        if c.to_lowercase().to_string() == search_str {
-            let c_end_index = c_index + c.len_utf8();
-            return vec![&s[..c_index], &s[c_index..c_end_index], &s[c_end_index..]];
-        }
-    }
-    vec![s, "", ""]
-}
-
 fn menu_style(selected: bool) -> Style {
     let color = if selected { Color::Red } else { Color::Blue };
-    Style::new().fg(color)
-}
-
-fn add_menu_label<T: Copy>(
-    builder: &mut ParagraphBuilder,
-    menu_item: &MenuItem<T>,
-    selected: bool,
-) {
-    let parts = partition_string(menu_item.name(), &menu_item.key().to_string());
-    for (index, s) in parts.iter().enumerate() {
-        if s.is_empty() {
-            continue;
-        }
-        let mut style = menu_style(selected);
-        if index == 1 {
-            style = style.add_modifier(Modifier::BOLD);
-            builder.add_styled(format!("({})", s), style);
-        } else {
-            builder.add_styled(s.to_string(), style);
-        }
-    }
-    builder.add_plain("   ".to_string());
+    Style::new().fg(color).add_modifier(Modifier::BOLD)
 }
 
 fn format_menu<T: Copy>(menu: &Menu<T>) -> ParagraphBuilder {
     let mut builder = ParagraphBuilder::new();
     for (index, item) in menu.items().iter().enumerate() {
-        add_menu_label(&mut builder, item, index == *menu.selected_index());
+        let selected = index == *menu.selected_index();
+        let style = menu_style(selected);
+        builder.add_styled(format!("{}  ", item.display()), style);
     }
 
     builder
         .new_line()
-        .add_styled(format!(" {}", menu.description()), menu_style(true))
+        .add_plain(menu.description().to_string())
         .new_line()
         .bordered();
     builder

@@ -5,18 +5,18 @@ use im::Vector;
 
 #[derive(Clone, Getters)]
 pub struct MenuItem<T: Clone + Copy> {
-    name: String,
     description: String,
+    display: String,
     key: char,
     value: T,
 }
 
 impl<T: Clone + Copy> MenuItem<T> {
-    pub fn new(value: T, name: &str, description: &str) -> MenuItem<T> {
-        let key = name.to_lowercase().chars().next().unwrap();
+    pub fn new(value: T, name: &str, description: &str, key: char) -> MenuItem<T> {
+        let display_string = format!("{}:{}", key, name);
         MenuItem {
-            name: name.to_string(),
             description: description.to_string(),
+            display: display_string,
             key,
             value,
         }
@@ -89,18 +89,28 @@ mod tests {
 
     #[test]
     fn test_menu_item() {
-        let item = MenuItem::new(MenuValue::Append, "Append", "Add current date to the file.");
-        assert_eq!(item.name, "Append");
+        let item = MenuItem::new(
+            MenuValue::Append,
+            "Append",
+            "Add current date to the file.",
+            'A',
+        );
+        assert_eq!(item.display, "A:Append");
         assert_eq!(item.description, "Add current date to the file.");
-        assert_eq!(item.key, 'a');
+        assert_eq!(item.key, 'A');
     }
 
     #[test]
     fn test_menu() {
         let menu_items = vector!(
-            MenuItem::new(MenuValue::Append, "Append", "Add current date to the file."),
-            MenuItem::new(MenuValue::Reload, "Reload", "Force reload of file."),
-            MenuItem::new(MenuValue::Quit, "Quit", "Quit the program.")
+            MenuItem::new(
+                MenuValue::Append,
+                "Append",
+                "Add current date to the file.",
+                'a'
+            ),
+            MenuItem::new(MenuValue::Reload, "Reload", "Force reload of file.", 'r'),
+            MenuItem::new(MenuValue::Quit, "Quit", "Quit the program.", 'Q'),
         );
         let mut menu = Menu::new(menu_items.clone()).unwrap();
         for i in 0..menu_items.len() {
