@@ -563,7 +563,7 @@ fn format_menu<T: Copy>(menu: &Menu<T>) -> ParagraphBuilder {
     let mut builder = ParagraphBuilder::new();
     builder
         .add_line(choices)
-        .add_line_str(menu.description().to_string(), Some(menu_style(true)))
+        .add_line_str(format!(" {}", menu.description()), Some(menu_style(true)))
         .bordered();
     builder
 }
@@ -574,7 +574,7 @@ const WARNING_HEIGHT: u16 = 3;
 fn format_warnings_summary(file: &LoadedFile) -> ParagraphBuilder {
     let style = Some(Style::new().fg(Color::Red));
     let text = match file.warnings.len() {
-        0 => String::new(),
+        0 => "".to_string(),
         1 => file.warnings.get(0).unwrap().clone(),
         _ => format!("There are {} warnings.", file.warnings.len()),
     };
@@ -670,22 +670,13 @@ fn create_report_screen(
         Err(e) => return create_error_screen(screen_area, menu, filename, &e),
     };
     use Constraint::{Length, Min};
-    if file.warnings().is_empty() {
-        let vertical = Layout::vertical([Length(MENU_HEIGHT), Min(0)]);
-        let [menu_area, report_area] = vertical.areas(screen_area);
-        vector!(
-            Region::new(format_menu(menu), menu_area),
-            Region::new(report, report_area),
-        )
-    } else {
-        let vertical = Layout::vertical([Length(MENU_HEIGHT), Min(0), Length(WARNING_HEIGHT)]);
-        let [menu_area, report_area, warnings_area] = vertical.areas(screen_area);
-        vector!(
-            Region::new(format_menu(menu), menu_area),
-            Region::new(report, report_area),
-            Region::new(format_warnings_summary(file), warnings_area)
-        )
-    }
+    let vertical = Layout::vertical([Length(MENU_HEIGHT), Min(0), Length(WARNING_HEIGHT)]);
+    let [menu_area, report_area, warnings_area] = vertical.areas(screen_area);
+    vector!(
+        Region::new(format_menu(menu), menu_area),
+        Region::new(report, report_area),
+        Region::new(format_warnings_summary(file), warnings_area)
+    )
 }
 
 fn get_editor() -> String {
