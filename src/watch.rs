@@ -95,7 +95,7 @@ struct RealAppScreen<T: Backend> {
 
 impl<T: Backend> AppScreen for RealAppScreen<T> {
     fn read(&self, timeout: Duration) -> Result<RawReadResult> {
-        let error_context = "RealTerminal.read";
+        let error_context = "RealAppScreen.read";
         while poll(timeout).with_context(|| format!("{}: poll", error_context))? {
             match read().with_context(|| format!("{}: read", error_context))? {
                 Event::Key(event) => match event.code {
@@ -113,6 +113,7 @@ impl<T: Backend> AppScreen for RealAppScreen<T> {
     }
 
     fn draw(&mut self, region_factory: &dyn Fn(Rect) -> Vector<Region>) -> Result<()> {
+        let error_context = "RealAppScreen.draw";
         self.terminal
             .draw(|frame| {
                 let regions = region_factory(frame.area());
@@ -120,22 +121,26 @@ impl<T: Backend> AppScreen for RealAppScreen<T> {
                     frame.render_widget(region.paragraph.build(), region.area);
                 }
             })
-            .with_context(|| "failed to draw terminal")
+            .with_context(|| format!("{}: failed to draw terminal", error_context))
             .map(|_| ())
     }
 
     fn pause(&mut self) -> Result<()> {
-        disable_raw_mode().with_context(|| "failed to disable raw mode")?;
+        let error_context = "RealAppScreen.pause";
+        disable_raw_mode()
+            .with_context(|| format!("{}: failed to disable raw mode", error_context))?;
         self.terminal
             .clear()
-            .with_context(|| "failed to clear terminal")
+            .with_context(|| format!("{}: failed to clear terminal", error_context))
     }
 
     fn resume(&mut self) -> Result<()> {
-        enable_raw_mode().with_context(|| "failed to enable raw mode")?;
+        let error_context = "RealAppScreen.resume";
+        enable_raw_mode()
+            .with_context(|| format!("{}: failed to enable raw mode", error_context))?;
         self.terminal
             .clear()
-            .with_context(|| "failed to clear terminal")
+            .with_context(|| format!("{}: failed to clear terminal", error_context))
     }
 }
 
