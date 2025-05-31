@@ -1,23 +1,49 @@
-use crate::menu::{Menu, MenuItem};
+use ratatui::{
+    Terminal,
+    layout::{Constraint, Layout},
+    style::{Color, Modifier, Style},
+};
+
 use crate::model::{Date, DateRange, DayEntry, Project};
 use crate::report;
+use crate::watch::paragraph::ParagraphBuilder;
 use crate::{append, parse};
 use anyhow::{Context, Result, anyhow};
-use crossterm::cursor::{Hide, Show};
 use crossterm::event::KeyCode;
 use crossterm::event::{Event, poll, read};
-use crossterm::style::{StyledContent, Stylize};
-use crossterm::{QueueableCommand, cursor, execute, style, terminal};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use derive_getters::Getters;
 use im::{Vector, vector};
+use menu::{Menu, MenuItem};
+use ratatui::prelude::{Backend, Rect};
 use regex::Regex;
-use scopeguard::defer;
 use std::env;
-use std::fmt::Display;
 use std::fs;
-use std::io::{Stdout, Write, stdout};
 use std::process::Command;
 use std::time::{Duration, SystemTime};
+
+mod menu;
+mod paragraph;
+
+pub fn watch_and_report(filename: &str, dates: &dyn Fn() -> DateRange) -> Result<()> {
+    let mut menu = create_menu()?;
+    let mut app_display = RealAppScreen {
+        terminal: ratatui::init(),
+    };
+    let mut storage = RealStorage {};
+    let mut editor = RealEditor {};
+    let mut app_state = WatchApp::new(
+        filename,
+        &mut menu,
+        &mut app_display,
+        &mut storage,
+        &mut editor,
+    );
+    let result = app_state.run(dates);
+    _ = app_display.terminal.clear();
+    ratatui::restore();
+    result
+}
 
 enum RawReadResult {
     Char(char),
@@ -41,15 +67,11 @@ enum ReadResult {
     Timeout,
 }
 
-trait Terminal {
-    fn start(&self) -> Result<()>;
-    fn stop(&self) -> Result<()>;
+trait AppScreen {
     fn read(&self, timeout: Duration) -> Result<RawReadResult>;
-    fn clear(&self) -> Result<()>;
-    fn print_str(&self, s: &str) -> Result<()>;
-    fn print_styled_str(&self, s: StyledContent<&str>) -> Result<()>;
-    fn print_styled_string(&self, s: StyledContent<String>) -> Result<()>;
-    fn goto(&self, row: u16, col: u16) -> Result<()>;
+    fn draw(&mut self, region_factory: &dyn Fn(Rect) -> Vector<Region>) -> Result<()>;
+    fn pause(&mut self) -> Result<()>;
+    fn resume(&mut self) -> Result<()>;
 }
 
 trait Storage {
@@ -63,87 +85,17 @@ trait Storage {
     ) -> Result<()>;
 }
 
-trait AppLogic {
-    fn run(
-        &mut self,
-        menu: &mut Menu<ReadResult>,
-        terminal: &dyn Terminal,
-        storage: &mut dyn Storage,
-        editor: &mut dyn Editor,
-    ) -> Result<UICommand>;
-}
-
 trait Editor {
     fn edit_file(&self, filename: &str, line_number: u32) -> Result<()>;
 }
 
-struct Writer {
-    context: String,
-    stdout: Stdout,
-    result: Option<anyhow::Error>,
+struct RealAppScreen<T: Backend> {
+    terminal: Terminal<T>,
 }
 
-impl Writer {
-    fn new(context: &str) -> Self {
-        Writer {
-            context: context.to_string(),
-            stdout: stdout(),
-            result: None,
-        }
-    }
-
-    fn enqueue<T: crossterm::Command>(&mut self, error_message: &str, command: T) -> &mut Self {
-        if self.result.is_none() {
-            self.result = self
-                .stdout
-                .queue(command)
-                .with_context(|| format!("{}: {}", self.context, error_message))
-                .err();
-        }
-        self
-    }
-
-    fn write(&mut self) -> Result<()> {
-        if self.result.is_none() {
-            self.result = self
-                .stdout
-                .flush()
-                .with_context(|| format!("{}: flush", self.context))
-                .err();
-        }
-        self.result.take().map(Err).unwrap_or(Ok(()))
-    }
-}
-
-struct RealTerminal {}
-impl RealTerminal {
-    fn print<T: Display>(&self, s: T) -> Result<()> {
-        Writer::new("RealTerminal.println")
-            .enqueue("Clear", terminal::Clear(terminal::ClearType::CurrentLine))
-            .enqueue("Print", style::Print(s))
-            .enqueue("MoveDown", cursor::MoveDown(1))
-            .enqueue("MoveToColumn", cursor::MoveToColumn(0))
-            .write()
-    }
-}
-
-impl Terminal for RealTerminal {
-    fn start(&self) -> Result<()> {
-        let error_context = "init_term";
-        terminal::enable_raw_mode()
-            .with_context(|| format!("{}: enable_raw_mode", error_context))?;
-        execute!(stdout(), Hide).with_context(|| format!("{}: hide cursor", error_context))?;
-        Ok(())
-    }
-
-    fn stop(&self) -> Result<()> {
-        _ = execute!(stdout(), Show);
-        _ = terminal::disable_raw_mode();
-        Ok(())
-    }
-
+impl<T: Backend> AppScreen for RealAppScreen<T> {
     fn read(&self, timeout: Duration) -> Result<RawReadResult> {
-        let error_context = "RealTerminal.read";
+        let error_context = "RealAppScreen.read";
         while poll(timeout).with_context(|| format!("{}: poll", error_context))? {
             match read().with_context(|| format!("{}: read", error_context))? {
                 Event::Key(event) => match event.code {
@@ -160,29 +112,35 @@ impl Terminal for RealTerminal {
         Ok(RawReadResult::Timeout)
     }
 
-    fn clear(&self) -> Result<()> {
-        Writer::new("RealTerminal.clear")
-            .enqueue("Clear", terminal::Clear(terminal::ClearType::All))
-            .enqueue("MoveTo", cursor::MoveTo(0, 0))
-            .write()
+    fn draw(&mut self, region_factory: &dyn Fn(Rect) -> Vector<Region>) -> Result<()> {
+        let error_context = "RealAppScreen.draw";
+        self.terminal
+            .draw(|frame| {
+                let regions = region_factory(frame.area());
+                for region in regions.iter() {
+                    frame.render_widget(region.paragraph.build(), region.area);
+                }
+            })
+            .with_context(|| format!("{}: failed to draw terminal", error_context))
+            .map(|_| ())
     }
 
-    fn print_str(&self, s: &str) -> Result<()> {
-        self.print(s)
+    fn pause(&mut self) -> Result<()> {
+        let error_context = "RealAppScreen.pause";
+        disable_raw_mode()
+            .with_context(|| format!("{}: failed to disable raw mode", error_context))?;
+        self.terminal
+            .clear()
+            .with_context(|| format!("{}: failed to clear terminal", error_context))
     }
 
-    fn print_styled_str(&self, s: StyledContent<&str>) -> Result<()> {
-        self.print(s)
-    }
-
-    fn print_styled_string(&self, s: StyledContent<String>) -> Result<()> {
-        self.print(s)
-    }
-
-    fn goto(&self, row: u16, col: u16) -> Result<()> {
-        Writer::new("RealTerminal.goto")
-            .enqueue("MoveTo", cursor::MoveTo(col, row))
-            .write()
+    fn resume(&mut self) -> Result<()> {
+        let error_context = "RealAppScreen.resume";
+        enable_raw_mode()
+            .with_context(|| format!("{}: failed to enable raw mode", error_context))?;
+        self.terminal
+            .clear()
+            .with_context(|| format!("{}: failed to clear terminal", error_context))
     }
 }
 
@@ -240,144 +198,10 @@ impl Editor for RealEditor {
     }
 }
 
-struct RealAppLogic<'a> {
-    filename: &'a str,
-    last_update_millis: u128,
-    loaded: LoadedFile,
-    read_timeout: Duration,
-    update_delay_millis: u128,
-}
-
-impl<'a> RealAppLogic<'a> {
-    fn new(filename: &'a str) -> RealAppLogic<'a> {
-        RealAppLogic {
-            filename,
-            loaded: LoadedFile::empty(),
-            last_update_millis: 0,
-            update_delay_millis: 500,
-            read_timeout: Duration::from_millis(100),
-        }
-    }
-
-    fn load(&mut self, storage: &mut dyn Storage, skip_delay: bool) -> Result<(bool, LoadedFile)> {
-        let current_file_millis = storage.timestamp(self.filename)?;
-        if current_file_millis == self.last_update_millis {
-            return Ok((false, self.loaded.clone()));
-        }
-        let next_update_millis = self.last_update_millis + self.update_delay_millis;
-        if current_file_millis < next_update_millis && !skip_delay {
-            return Ok((false, self.loaded.clone()));
-        }
-        self.last_update_millis = current_file_millis;
-        self.loaded = storage.load(self.filename)?;
-        Ok((true, self.loaded.clone()))
-    }
-
-    fn append(&mut self, storage: &mut dyn Storage) -> Result<(bool, LoadedFile)> {
-        self.load(storage, true)?;
-        let date = Date::today();
-        let day_entries = self.loaded.day_entries();
-        append::validate_date(day_entries, date)?;
-
-        let min_date = date.minus_days(30)?;
-        let recent_projects = append::recent_projects(day_entries, min_date, 5);
-        storage.append(self.filename, date, recent_projects)?;
-        self.load(storage, true)
-    }
-
-    fn edit(
-        &mut self,
-        storage: &mut dyn Storage,
-        terminal: &dyn Terminal,
-        editor: &mut dyn Editor,
-    ) -> Result<(bool, LoadedFile)> {
-        let line_number = self
-            .loaded
-            .day_entries()
-            .last()
-            .map(|e| e.line_number())
-            .unwrap_or(&0);
-
-        terminal.stop()?;
-        defer! {
-            _=terminal.start();
-        }
-
-        editor.edit_file(self.filename, *line_number)?;
-        self.load(storage, true)
-    }
-
-    fn read(&mut self, menu: &mut Menu<ReadResult>, terminal: &dyn Terminal) -> Result<ReadResult> {
-        loop {
-            match terminal.read(self.read_timeout)? {
-                RawReadResult::Char(c) => match menu.select(c) {
-                    Some(x) => return Ok(x),
-                    None => continue,
-                },
-                RawReadResult::Enter => return Ok(menu.value()),
-                RawReadResult::Left => return Ok(ReadResult::Left),
-                RawReadResult::Right => return Ok(ReadResult::Right),
-                RawReadResult::Timeout => return Ok(ReadResult::Timeout),
-                RawReadResult::Resized => return Ok(ReadResult::Resized),
-            }
-        }
-    }
-}
-
-impl AppLogic for RealAppLogic<'_> {
-    fn run(
-        &mut self,
-        menu: &mut Menu<ReadResult>,
-        terminal: &dyn Terminal,
-        storage: &mut dyn Storage,
-        editor: &mut dyn Editor,
-    ) -> Result<UICommand> {
-        match self.read(menu, terminal)? {
-            ReadResult::Quit => Ok(UICommand::Quit),
-            ReadResult::Reload => match self.load(storage, true) {
-                Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
-                Err(e) => Ok(UICommand::DisplayError(e)),
-            },
-            ReadResult::Warnings => Ok(UICommand::DisplayWarnings(self.loaded.clone())),
-            ReadResult::Edit => match self.edit(storage, terminal, editor) {
-                Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
-                Err(e) => Ok(UICommand::DisplayError(e)),
-            },
-            ReadResult::Append => match self.append(storage) {
-                Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
-                Err(e) => Ok(UICommand::DisplayError(e)),
-            },
-            ReadResult::Left => {
-                menu.left();
-                Ok(UICommand::UpdateMenu)
-            }
-            ReadResult::Right => {
-                menu.right();
-                Ok(UICommand::UpdateMenu)
-            }
-            ReadResult::Resized => Ok(UICommand::Report(self.loaded.clone())),
-            ReadResult::Timeout => match self.load(storage, false) {
-                Ok((true, loaded)) => Ok(UICommand::Report(loaded)),
-                Ok((false, _)) => Ok(UICommand::DoNothing),
-                Err(e) => Ok(UICommand::DisplayError(e)),
-            },
-        }
-    }
-}
-
 #[derive(Clone, Getters)]
 struct LoadedFile {
     day_entries: Vector<DayEntry>,
     warnings: Vector<String>,
-}
-
-enum UICommand {
-    DoNothing,
-    Quit,
-    Report(LoadedFile),
-    UpdateMenu,
-    DisplayWarnings(LoadedFile),
-    DisplayError(anyhow::Error),
 }
 
 impl LoadedFile {
@@ -396,137 +220,375 @@ impl LoadedFile {
     }
 }
 
-fn ui_impl(
-    filename: &str,
-    dates: &dyn Fn() -> DateRange,
-    menu: &mut Menu<ReadResult>,
-    terminal: &dyn Terminal,
-    editor: &mut dyn Editor,
-    storage: &mut dyn Storage,
-    logic: &mut dyn AppLogic,
-) -> Result<()> {
-    terminal.start()?;
-    defer! {
-        _=terminal.stop();
-    }
+#[derive(Debug, Clone, PartialEq)]
+struct Region {
+    paragraph: ParagraphBuilder,
+    area: Rect,
+}
 
-    loop {
-        let outcome = logic.run(menu, terminal, storage, editor)?;
-        match outcome {
-            UICommand::Quit => {
-                terminal.clear()?;
-                return Ok(());
-            }
-            UICommand::DoNothing => {}
-            UICommand::Report(loaded) => {
-                print_file(&loaded, dates(), terminal, menu)?;
-            }
-            UICommand::UpdateMenu => {
-                display_menu(terminal, menu)?;
-            }
-            UICommand::DisplayWarnings(loaded) => {
-                print_warnings(&loaded, terminal, menu)?;
-            }
-            UICommand::DisplayError(error) => {
-                print_error(filename, error, terminal, menu)?;
-            }
-        }
+impl Region {
+    fn new(paragraph: ParagraphBuilder, area: Rect) -> Self {
+        Region { paragraph, area }
     }
 }
 
-pub fn watch_and_report(filename: &str, dates: &dyn Fn() -> DateRange) -> Result<()> {
-    ui_impl(
-        filename,
-        dates,
-        &mut create_menu()?,
-        &RealTerminal {},
-        &mut RealEditor {},
-        &mut RealStorage {},
-        &mut RealAppLogic::new(filename),
-    )
+enum Displayed {
+    Report(LoadedFile),
+    Warnings(LoadedFile),
+    Error(anyhow::Error),
+}
+
+enum UICommand {
+    DoNothing,
+    Quit,
+    Report(LoadedFile),
+    UpdateMenu,
+    DisplayWarnings(LoadedFile),
+    DisplayError(anyhow::Error),
+}
+
+struct WatchApp<'a> {
+    filename: &'a str,
+    last_update_millis: u128,
+    loaded: LoadedFile,
+    read_timeout: Duration,
+    update_delay_millis: u128,
+    menu: &'a mut Menu<ReadResult>,
+    app_screen: &'a mut dyn AppScreen,
+    storage: &'a mut dyn Storage,
+    editor: &'a mut dyn Editor,
+}
+
+impl<'a> WatchApp<'a> {
+    fn new(
+        filename: &'a str,
+        menu: &'a mut Menu<ReadResult>,
+        app_screen: &'a mut dyn AppScreen,
+        storage: &'a mut dyn Storage,
+        editor: &'a mut dyn Editor,
+    ) -> WatchApp<'a> {
+        WatchApp {
+            filename,
+            loaded: LoadedFile::empty(),
+            last_update_millis: 0,
+            update_delay_millis: 500,
+            read_timeout: Duration::from_millis(100),
+            menu,
+            app_screen,
+            storage,
+            editor,
+        }
+    }
+
+    fn run(&mut self, dates: &dyn Fn() -> DateRange) -> Result<()> {
+        let mut displayed = Displayed::Report(LoadedFile {
+            day_entries: vector!(),
+            warnings: vector!(),
+        });
+        loop {
+            let outcome = self.run_once()?;
+            match outcome {
+                UICommand::Quit => return Ok(()),
+                UICommand::DoNothing => continue,
+                UICommand::Report(loaded) => displayed = Displayed::Report(loaded),
+                UICommand::UpdateMenu => (),
+                UICommand::DisplayWarnings(loaded) => displayed = Displayed::Warnings(loaded),
+                UICommand::DisplayError(error) => displayed = Displayed::Error(error),
+            };
+            self.update_screen(&displayed, dates)?;
+        }
+    }
+
+    fn update_screen(
+        &mut self,
+        displayed: &Displayed,
+        dates: &dyn Fn() -> DateRange,
+    ) -> Result<()> {
+        match displayed {
+            Displayed::Report(loaded_file) => self.app_screen.draw(&|screen_area| {
+                create_report_screen(screen_area, self.menu, self.filename, loaded_file, dates())
+            }),
+            Displayed::Warnings(loaded_file) => self
+                .app_screen
+                .draw(&|screen_area| create_warnings_screen(screen_area, self.menu, loaded_file)),
+            Displayed::Error(error) => self.app_screen.draw(&|screen_area| {
+                create_error_screen(screen_area, self.menu, self.filename, error)
+            }),
+        }
+    }
+
+    fn run_once(&mut self) -> Result<UICommand> {
+        match self.read()? {
+            ReadResult::Quit => Ok(UICommand::Quit),
+            ReadResult::Reload => match self.load(true) {
+                Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
+                Err(e) => Ok(UICommand::DisplayError(e)),
+            },
+            ReadResult::Warnings => Ok(UICommand::DisplayWarnings(self.loaded.clone())),
+            ReadResult::Edit => match self.edit() {
+                Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
+                Err(e) => Ok(UICommand::DisplayError(e)),
+            },
+            ReadResult::Append => match self.append() {
+                Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
+                Err(e) => Ok(UICommand::DisplayError(e)),
+            },
+            ReadResult::Left => {
+                self.menu.left();
+                Ok(UICommand::UpdateMenu)
+            }
+            ReadResult::Right => {
+                self.menu.right();
+                Ok(UICommand::UpdateMenu)
+            }
+            ReadResult::Resized => Ok(UICommand::Report(self.loaded.clone())),
+            ReadResult::Timeout => match self.load(false) {
+                Ok((true, loaded)) => Ok(UICommand::Report(loaded)),
+                Ok((false, _)) => Ok(UICommand::DoNothing),
+                Err(e) => Ok(UICommand::DisplayError(e)),
+            },
+        }
+    }
+
+    fn read(&mut self) -> Result<ReadResult> {
+        loop {
+            match self.app_screen.read(self.read_timeout)? {
+                RawReadResult::Char(c) => match self.menu.select(c) {
+                    Some(x) => return Ok(x),
+                    None => continue,
+                },
+                RawReadResult::Enter => return Ok(self.menu.value()),
+                RawReadResult::Left => return Ok(ReadResult::Left),
+                RawReadResult::Right => return Ok(ReadResult::Right),
+                RawReadResult::Timeout => return Ok(ReadResult::Timeout),
+                RawReadResult::Resized => return Ok(ReadResult::Resized),
+            }
+        }
+    }
+
+    fn load(&mut self, skip_delay: bool) -> Result<(bool, LoadedFile)> {
+        let current_file_millis = self.storage.timestamp(self.filename)?;
+        if current_file_millis == self.last_update_millis {
+            return Ok((false, self.loaded.clone()));
+        }
+        let next_update_millis = self.last_update_millis + self.update_delay_millis;
+        if current_file_millis < next_update_millis && !skip_delay {
+            return Ok((false, self.loaded.clone()));
+        }
+        self.last_update_millis = current_file_millis;
+        self.loaded = self.storage.load(self.filename)?;
+        Ok((true, self.loaded.clone()))
+    }
+
+    fn append(&mut self) -> Result<(bool, LoadedFile)> {
+        self.load(true)?;
+        let date = Date::today();
+        let day_entries = self.loaded.day_entries();
+        append::validate_date(day_entries, date)?;
+
+        let min_date = date.minus_days(30)?;
+        let recent_projects = append::recent_projects(day_entries, min_date, 5);
+        self.storage.append(self.filename, date, recent_projects)?;
+        self.load(true)
+    }
+
+    fn edit(&mut self) -> Result<(bool, LoadedFile)> {
+        let line_number = self
+            .loaded
+            .day_entries()
+            .last()
+            .map(|e| e.line_number())
+            .unwrap_or(&0);
+
+        self.app_screen
+            .pause()
+            .with_context(|| "failed to pause to run editor")?;
+        let rc = self
+            .editor
+            .edit_file(self.filename, *line_number)
+            .and_then(|_| self.load(true));
+        _ = self.app_screen.resume();
+        rc
+    }
 }
 
 fn create_menu() -> Result<Menu<ReadResult>> {
     let menu_items = vector!(
-        MenuItem::new(ReadResult::Edit, "Edit", "Edit the file."),
+        MenuItem::new(
+            ReadResult::Edit,
+            "Edit",
+            format!("Edit the file using {} and reload.", get_editor()).as_str(),
+            'e'
+        ),
         MenuItem::new(
             ReadResult::Append,
             "Append",
-            "Add current date to the file."
+            "Add current date to the file along with some recently used projects.",
+            'a'
         ),
-        MenuItem::new(ReadResult::Reload, "Reload", "Reload file."),
-        MenuItem::new(ReadResult::Warnings, "Warnings", "Display warnings."),
-        MenuItem::new(ReadResult::Quit, "Quit", "Quit the program.")
+        MenuItem::new(
+            ReadResult::Reload,
+            "Reload",
+            "Reload file and display report.",
+            'r'
+        ),
+        MenuItem::new(
+            ReadResult::Warnings,
+            "Warnings",
+            "Display all warnings.",
+            'w'
+        ),
+        MenuItem::new(ReadResult::Quit, "Quit", "Quit the program.", 'q')
     );
     Menu::new(menu_items)
 }
 
-fn display_menu(terminal: &dyn Terminal, menu: &Menu<ReadResult>) -> Result<()> {
-    terminal.goto(0, 0)?;
-    terminal.print_str(menu.render().as_str())?;
-    terminal.print_styled_str(menu.description().yellow())
+fn menu_style(selected: bool) -> Style {
+    if selected {
+        Style::new()
+            .fg(Color::Red)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+    } else {
+        Style::new().fg(Color::Blue)
+    }
 }
 
-fn print_error(
-    filename: &str,
-    error: anyhow::Error,
-    terminal: &dyn Terminal,
+fn format_menu<T: Copy>(menu: &Menu<T>) -> ParagraphBuilder {
+    let mut builder = ParagraphBuilder::new();
+    for (index, item) in menu.items().iter().enumerate() {
+        let selected = index == *menu.selected_index();
+        let style = menu_style(selected);
+        builder
+            .add_styled(item.display().to_string(), style)
+            .add_plain("  ".to_string());
+    }
+
+    builder
+        .new_line()
+        .add_plain(menu.description().to_string())
+        .new_line()
+        .bordered();
+    builder
+}
+
+const MENU_HEIGHT: u16 = 4;
+const WARNING_HEIGHT: u16 = 3;
+
+fn format_warnings_summary(file: &LoadedFile) -> ParagraphBuilder {
+    let style = Style::new().fg(Color::Red);
+    let text = match file.warnings.len() {
+        0 => "".to_string(),
+        1 => file.warnings.get(0).unwrap().clone(),
+        _ => format!("There are {} warnings.", file.warnings.len()),
+    };
+    let mut builder = ParagraphBuilder::new();
+    builder
+        .add_styled(text, style)
+        .new_line()
+        .titled("Warnings".to_string());
+    builder
+}
+
+fn format_warnings(file: &LoadedFile) -> ParagraphBuilder {
+    let mut builder = ParagraphBuilder::new();
+    if file.warnings.is_empty() {
+        builder
+            .add_plain("There are no warnings to display.".to_string())
+            .new_line();
+    } else {
+        let style = Style::new().fg(Color::Red);
+        for warning in file.warnings.iter() {
+            builder
+                .add_styled(format!("warning: {}", warning), style)
+                .new_line();
+        }
+    }
+    builder.bordered();
+    builder
+}
+
+fn format_report(file: &LoadedFile, dates: DateRange) -> Result<ParagraphBuilder> {
+    let mut builder = ParagraphBuilder::new();
+    for line in report::create_report(dates, &file.day_entries)? {
+        builder.add_plain(line).new_line();
+    }
+    builder.titled("Report".to_string());
+    Ok(builder)
+}
+
+fn format_error(filename: &str, error: &anyhow::Error) -> ParagraphBuilder {
+    let style = Style::new().fg(Color::Red);
+    let lines = format!("{:?}", error)
+        .lines()
+        .map(|s| s.to_string())
+        .collect::<Vec<_>>();
+    let mut builder = ParagraphBuilder::new();
+    builder.add_styled(format!("   filename: {}", filename), style);
+    builder
+        .add_styled(
+            format!(
+                "    message: {:?}",
+                lines.first().map(|s| s.as_ref()).unwrap_or("")
+            ),
+            style,
+        )
+        .new_line();
+    for line in lines.iter().skip(1) {
+        builder
+            .add_styled(format!("           : {}", line), style)
+            .new_line();
+    }
+    builder
+}
+
+fn create_warnings_screen(
+    screen_area: Rect,
     menu: &Menu<ReadResult>,
-) -> Result<()> {
-    terminal.clear()?;
-    display_menu(terminal, menu)?;
-    terminal.goto(3, 0)?;
-    terminal.print_styled_str("error:".red())?;
-    terminal.print_styled_string(format!("   filename: {}", filename).red())?;
-    terminal.print_styled_string(format!("    message: {:?}", error).red())
+    file: &LoadedFile,
+) -> Vector<Region> {
+    use Constraint::{Length, Min};
+    let vertical = Layout::vertical([Length(MENU_HEIGHT), Min(0)]);
+    let [menu_area, warnings_area] = vertical.areas(screen_area);
+    vector!(
+        Region::new(format_menu(menu), menu_area),
+        Region::new(format_warnings(file), warnings_area)
+    )
 }
 
-fn print_file(
+fn create_error_screen(
+    screen_area: Rect,
+    menu: &Menu<ReadResult>,
+    filename: &str,
+    error: &anyhow::Error,
+) -> Vector<Region> {
+    use Constraint::{Length, Min};
+    let vertical = Layout::vertical([Length(MENU_HEIGHT), Min(0)]);
+    let [menu_area, error_area] = vertical.areas(screen_area);
+    vector!(
+        Region::new(format_menu(menu), menu_area),
+        Region::new(format_error(filename, error), error_area)
+    )
+}
+
+fn create_report_screen(
+    screen_area: Rect,
+    menu: &Menu<ReadResult>,
+    filename: &str,
     file: &LoadedFile,
     dates: DateRange,
-    terminal: &dyn Terminal,
-    menu: &Menu<ReadResult>,
-) -> Result<()> {
-    terminal.clear()?;
-    display_menu(terminal, menu)?;
-    terminal.goto(3, 0)?;
-    match file.warnings.len() {
-        0 => (),
-        1 => {
-            terminal
-                .print_styled_string(format!("warning: {}", file.warnings[0].as_str()).red())?;
-            terminal.print_str("")?;
-        }
-        _ => {
-            terminal.print_styled_string(
-                format!("There are {} warnings.", file.warnings.len()).red(),
-            )?;
-            terminal.print_str("")?;
-        }
-    }
-    let lines = report::create_report(dates, &file.day_entries)?;
-    for line in lines {
-        terminal.print_str(line.as_str())?;
-    }
-    Ok(())
-}
-
-fn print_warnings(
-    file: &LoadedFile,
-    terminal: &dyn Terminal,
-    menu: &Menu<ReadResult>,
-) -> Result<()> {
-    terminal.clear()?;
-    display_menu(terminal, menu)?;
-    terminal.goto(3, 0)?;
-    if file.warnings.is_empty() {
-        terminal.print_str("There are no warnings to display.")?;
-    } else {
-        for warning in &file.warnings {
-            terminal.print_styled_string(format!("warning: {}", warning.as_str()).red())?;
-        }
-    }
-    Ok(())
+) -> Vector<Region> {
+    let report = match format_report(file, dates) {
+        Ok(r) => r,
+        Err(e) => return create_error_screen(screen_area, menu, filename, &e),
+    };
+    use Constraint::{Length, Min};
+    let vertical = Layout::vertical([Length(MENU_HEIGHT), Min(0), Length(WARNING_HEIGHT)]);
+    let [menu_area, report_area, warnings_area] = vertical.areas(screen_area);
+    vector!(
+        Region::new(format_menu(menu), menu_area),
+        Region::new(report, report_area),
+        Region::new(format_warnings_summary(file), warnings_area)
+    )
 }
 
 fn get_editor() -> String {

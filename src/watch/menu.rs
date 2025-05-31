@@ -1,43 +1,29 @@
 use anyhow::Result;
 use anyhow::anyhow;
-use crossterm::style::Stylize;
+use derive_getters::Getters;
 use im::Vector;
 
-#[derive(Clone)]
+#[derive(Clone, Getters)]
 pub struct MenuItem<T: Clone + Copy> {
-    name: String,
     description: String,
+    display: String,
     key: char,
     value: T,
 }
 
 impl<T: Clone + Copy> MenuItem<T> {
-    pub fn new(value: T, name: &str, description: &str) -> MenuItem<T> {
-        let key = name.to_lowercase().chars().next().unwrap();
+    pub fn new(value: T, name: &str, description: &str, key: char) -> MenuItem<T> {
+        let display_string = format!("{}:{}", key, name);
         MenuItem {
-            name: name.to_string(),
             description: description.to_string(),
+            display: display_string,
             key,
             value,
         }
     }
-
-    fn render(&self, first: bool, selected: bool) -> String {
-        let mut text = format!(
-            "{}({}){} ",
-            if first { "" } else { " " },
-            self.name.get(..1).unwrap(),
-            self.name.get(1..).unwrap_or("")
-        );
-        if selected {
-            text = text.dark_red().to_string();
-        } else {
-            text = text.dark_blue().to_string();
-        }
-        text
-    }
 }
 
+#[derive(Getters)]
 pub struct Menu<T: Clone + Copy> {
     items: Vector<MenuItem<T>>,
     selected_index: usize,
@@ -63,17 +49,6 @@ impl<T: Clone + Copy> Menu<T> {
             }
         }
         None
-    }
-
-    pub fn render(&self) -> String {
-        let mut text = String::new();
-        for (i, item) in self.items.iter().enumerate() {
-            if i > 0 {
-                text += "    ";
-            }
-            text += item.render(i == 0, i == self.selected_index).as_ref();
-        }
-        text
     }
 
     pub fn left(&mut self) {
@@ -114,36 +89,32 @@ mod tests {
 
     #[test]
     fn test_menu_item() {
-        let item = MenuItem::new(MenuValue::Append, "Append", "Add current date to the file.");
-        assert_eq!(item.name, "Append");
-        assert_eq!(item.description, "Add current date to the file.");
-        assert_eq!(item.key, 'a');
-        assert_eq!(item.render(true, true), "(A)ppend ".dark_red().to_string());
-        assert_eq!(
-            item.render(false, false),
-            " (A)ppend ".dark_blue().to_string(),
+        let item = MenuItem::new(
+            MenuValue::Append,
+            "Append",
+            "Add current date to the file.",
+            'A',
         );
+        assert_eq!(item.display, "A:Append");
+        assert_eq!(item.description, "Add current date to the file.");
+        assert_eq!(item.key, 'A');
     }
 
     #[test]
     fn test_menu() {
         let menu_items = vector!(
-            MenuItem::new(MenuValue::Append, "Append", "Add current date to the file."),
-            MenuItem::new(MenuValue::Reload, "Reload", "Force reload of file."),
-            MenuItem::new(MenuValue::Quit, "Quit", "Quit the program.")
+            MenuItem::new(
+                MenuValue::Append,
+                "Append",
+                "Add current date to the file.",
+                'a'
+            ),
+            MenuItem::new(MenuValue::Reload, "Reload", "Force reload of file.", 'r'),
+            MenuItem::new(MenuValue::Quit, "Quit", "Quit the program.", 'Q'),
         );
         let mut menu = Menu::new(menu_items.clone()).unwrap();
         for i in 0..menu_items.len() {
             assert_eq!(menu.selected_index, i);
-            assert_eq!(
-                menu.render(),
-                format!(
-                    "{}    {}    {}",
-                    menu_items[0].render(true, menu.selected_index == 0),
-                    menu_items[1].render(false, menu.selected_index == 1),
-                    menu_items[2].render(false, menu.selected_index == 2)
-                )
-            );
             menu.right();
         }
         for i in (0..menu_items.len()).rev() {
