@@ -17,7 +17,6 @@ use im::{Vector, vector};
 use menu::{Menu, MenuItem};
 use ratatui::prelude::{Backend, Rect};
 use regex::Regex;
-use scopeguard::defer;
 use std::env;
 use std::fs;
 use std::process::Command;
@@ -27,13 +26,10 @@ mod menu;
 mod paragraph;
 
 pub fn watch_and_report(filename: &str, dates: &dyn Fn() -> DateRange) -> Result<()> {
-    let terminal = ratatui::init();
-    defer! {
-        ratatui::restore();
-    }
-
     let mut menu = create_menu()?;
-    let mut app_display = RealAppScreen { terminal };
+    let mut app_display = RealAppScreen {
+        terminal: ratatui::init(),
+    };
     let mut storage = RealStorage {};
     let mut editor = RealEditor {};
     let mut app_state = WatchApp::new(
@@ -43,7 +39,10 @@ pub fn watch_and_report(filename: &str, dates: &dyn Fn() -> DateRange) -> Result
         &mut storage,
         &mut editor,
     );
-    app_state.run(dates)
+    let result = app_state.run(dates);
+    _ = app_display.terminal.clear();
+    ratatui::restore();
+    result
 }
 
 enum RawReadResult {
