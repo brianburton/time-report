@@ -198,66 +198,42 @@ impl Editor for RealEditor {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-struct LineBuilder {
-    spans: Vector<(String, Option<Style>)>,
-}
-
-impl LineBuilder {
-    fn new() -> Self {
-        Self { spans: vector!() }
-    }
-
-    fn from(text: String, style: Option<Style>) -> Self {
-        let mut builder = LineBuilder::new();
-        builder.spans.push_back((text, style));
-        builder
-    }
-
-    fn add_plain(&mut self, s: String) -> &mut Self {
-        self.spans.push_back((s, None));
-        self
-    }
-
-    fn add_styled(&mut self, s: String, style: Style) -> &mut Self {
-        self.spans.push_back((s, Some(style)));
-        self
-    }
-
-    fn build(&self) -> Line {
-        let spans: Vec<Span<'_>> = self
-            .spans
-            .iter()
-            .map(|(t, s)| match s {
-                Some(style) => Span::styled(t, *style),
-                None => Span::raw(t),
-            })
-            .collect();
-        Line::from(spans)
-    }
-}
+type SpanSpec = (String, Option<Style>);
+type LineSpec = Vector<SpanSpec>;
 
 #[derive(Debug, Clone, PartialEq)]
 struct ParagraphBuilder {
-    lines: Vector<LineBuilder>,
+    spans: Vector<SpanSpec>,
+    lines: Vector<LineSpec>,
     border: Option<String>,
 }
 
 impl ParagraphBuilder {
     fn new() -> Self {
         Self {
+            spans: vector!(),
             lines: vector!(),
             border: None,
         }
     }
 
-    fn add_line(&mut self, line: LineBuilder) -> &mut Self {
-        self.lines.push_back(line);
+    fn add_plain(&mut self, s: String) -> &mut Self {
+        self.add((s, None))
+    }
+
+    fn add_styled(&mut self, s: String, style: Style) -> &mut Self {
+        self.add((s, Some(style)))
+    }
+
+    fn add(&mut self, spec: SpanSpec) -> &mut Self {
+        self.spans.push_back(spec);
         self
     }
 
-    fn add_line_str(&mut self, text: String, style: Option<Style>) -> &mut Self {
-        self.add_line(LineBuilder::from(text, style))
+    fn new_line(&mut self) -> &mut Self {
+        self.lines.push_back(self.spans.clone());
+        self.spans.clear();
+        self
     }
 
     fn bordered(&mut self) -> &mut Self {
@@ -271,13 +247,28 @@ impl ParagraphBuilder {
     }
 
     fn build(&self) -> Paragraph {
-        let lines: Vec<Line> = self.lines.iter().map(|line| line.build()).collect();
+        let lines: Vec<Line> = self
+            .lines
+            .iter()
+            .map(|spec| Self::build_line(spec))
+            .collect();
         let para = Paragraph::new(lines);
         match &self.border {
             Some(title) if title.is_empty() => para.block(Block::bordered()),
             Some(title) => para.block(Block::bordered().title(title.to_string())),
             None => para,
         }
+    }
+
+    fn build_line<'a>(spans: &'a Vector<SpanSpec>) -> Line<'a> {
+        let spans: Vec<Span<'a>> = spans
+            .iter()
+            .map(|(t, s)| match s {
+                Some(style) => Span::styled(t, *style),
+                None => Span::raw(t),
+            })
+            .collect();
+        Line::from(spans)
     }
 }
 
@@ -535,10 +526,10 @@ fn menu_style(selected: bool) -> Style {
     Style::new().fg(color)
 }
 
-fn format_menu_label<T: Copy>(
+fn add_menu_label<T: Copy>(
+    builder: &mut ParagraphBuilder,
     menu_item: &MenuItem<T>,
     selected: bool,
-    line_builder: &mut LineBuilder,
 ) {
     let parts = partition_string(menu_item.name(), &menu_item.key().to_string());
     for (index, s) in parts.iter().enumerate() {
@@ -548,23 +539,24 @@ fn format_menu_label<T: Copy>(
         let mut style = menu_style(selected);
         if index == 1 {
             style = style.add_modifier(Modifier::BOLD);
-            line_builder.add_styled(format!("({})", s), style);
+            builder.add_styled(format!("({})", s), style);
         } else {
-            line_builder.add_styled(s.to_string(), style);
+            builder.add_styled(s.to_string(), style);
         }
     }
-    line_builder.add_plain("   ".to_string());
+    builder.add_plain("   ".to_string());
 }
 
 fn format_menu<T: Copy>(menu: &Menu<T>) -> ParagraphBuilder {
-    let mut choices = LineBuilder::new();
-    for (index, item) in menu.items().iter().enumerate() {
-        format_menu_label(item, index == *menu.selected_index(), &mut choices);
-    }
     let mut builder = ParagraphBuilder::new();
+    for (index, item) in menu.items().iter().enumerate() {
+        add_menu_label(&mut builder, item, index == *menu.selected_index());
+    }
+
     builder
-        .add_line(choices)
-        .add_line_str(format!(" {}", menu.description()), Some(menu_style(true)))
+        .new_line()
+        .add_styled(format!(" {}", menu.description()), menu_style(true))
+        .new_line()
         .bordered();
     builder
 }
@@ -573,7 +565,7 @@ const MENU_HEIGHT: u16 = 4;
 const WARNING_HEIGHT: u16 = 3;
 
 fn format_warnings_summary(file: &LoadedFile) -> ParagraphBuilder {
-    let style = Some(Style::new().fg(Color::Red));
+    let style = Style::new().fg(Color::Red);
     let text = match file.warnings.len() {
         0 => "".to_string(),
         1 => file.warnings.get(0).unwrap().clone(),
@@ -581,7 +573,8 @@ fn format_warnings_summary(file: &LoadedFile) -> ParagraphBuilder {
     };
     let mut builder = ParagraphBuilder::new();
     builder
-        .add_line_str(text, style)
+        .add_styled(text, style)
+        .new_line()
         .titled("Warnings".to_string());
     builder
 }
@@ -589,11 +582,15 @@ fn format_warnings_summary(file: &LoadedFile) -> ParagraphBuilder {
 fn format_warnings(file: &LoadedFile) -> ParagraphBuilder {
     let mut builder = ParagraphBuilder::new();
     if file.warnings.is_empty() {
-        builder.add_line_str("There are no warnings to display.".to_string(), None);
+        builder
+            .add_plain("There are no warnings to display.".to_string())
+            .new_line();
     } else {
-        let style = Some(Style::new().fg(Color::Red));
+        let style = Style::new().fg(Color::Red);
         for warning in file.warnings.iter() {
-            builder.add_line_str(format!("warning: {}", warning), style);
+            builder
+                .add_styled(format!("warning: {}", warning), style)
+                .new_line();
         }
     }
     builder.bordered();
@@ -603,29 +600,33 @@ fn format_warnings(file: &LoadedFile) -> ParagraphBuilder {
 fn format_report(file: &LoadedFile, dates: DateRange) -> Result<ParagraphBuilder> {
     let mut builder = ParagraphBuilder::new();
     for line in report::create_report(dates, &file.day_entries)? {
-        builder.add_line_str(line, None);
+        builder.add_plain(line).new_line();
     }
     builder.titled("Report".to_string());
     Ok(builder)
 }
 
 fn format_error(filename: &str, error: &anyhow::Error) -> ParagraphBuilder {
-    let style = Some(Style::new().fg(Color::Red));
+    let style = Style::new().fg(Color::Red);
     let lines = format!("{:?}", error)
         .lines()
         .map(|s| s.to_string())
         .collect::<Vec<_>>();
     let mut builder = ParagraphBuilder::new();
-    builder.add_line_str(format!("   filename: {}", filename), style);
-    builder.add_line_str(
-        format!(
-            "    message: {:?}",
-            lines.first().map(|s| s.as_ref()).unwrap_or("")
-        ),
-        style,
-    );
+    builder.add_styled(format!("   filename: {}", filename), style);
+    builder
+        .add_styled(
+            format!(
+                "    message: {:?}",
+                lines.first().map(|s| s.as_ref()).unwrap_or("")
+            ),
+            style,
+        )
+        .new_line();
     for line in lines.iter().skip(1) {
-        builder.add_line_str(format!("           : {}", line), style);
+        builder
+            .add_styled(format!("           : {}", line), style)
+            .new_line();
     }
     builder
 }
