@@ -415,23 +415,43 @@ impl<'a> WatchApp<'a> {
 
 fn create_menu() -> Result<Menu<ReadResult>> {
     let menu_items = vector!(
-        MenuItem::new(ReadResult::Edit, "Edit", "Edit the file.", 'e'),
+        MenuItem::new(
+            ReadResult::Edit,
+            "Edit",
+            format!("Edit the file using {} and reload.", get_editor()).as_str(),
+            'e'
+        ),
         MenuItem::new(
             ReadResult::Append,
             "Append",
-            "Add current date to the file.",
+            "Add current date to the file along with some recently used projects.",
             'a'
         ),
-        MenuItem::new(ReadResult::Reload, "Reload", "Reload file.", 'r'),
-        MenuItem::new(ReadResult::Warnings, "Warnings", "Display warnings.", 'w'),
+        MenuItem::new(
+            ReadResult::Reload,
+            "Reload",
+            "Reload file and display report.",
+            'r'
+        ),
+        MenuItem::new(
+            ReadResult::Warnings,
+            "Warnings",
+            "Display all warnings.",
+            'w'
+        ),
         MenuItem::new(ReadResult::Quit, "Quit", "Quit the program.", 'q')
     );
     Menu::new(menu_items)
 }
 
 fn menu_style(selected: bool) -> Style {
-    let color = if selected { Color::Red } else { Color::Blue };
-    Style::new().fg(color).add_modifier(Modifier::BOLD)
+    if selected {
+        Style::new()
+            .fg(Color::Red)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+    } else {
+        Style::new().fg(Color::Blue)
+    }
 }
 
 fn format_menu<T: Copy>(menu: &Menu<T>) -> ParagraphBuilder {
@@ -439,7 +459,9 @@ fn format_menu<T: Copy>(menu: &Menu<T>) -> ParagraphBuilder {
     for (index, item) in menu.items().iter().enumerate() {
         let selected = index == *menu.selected_index();
         let style = menu_style(selected);
-        builder.add_styled(format!("{}  ", item.display()), style);
+        builder
+            .add_styled(item.display().to_string(), style)
+            .add_plain("  ".to_string());
     }
 
     builder
