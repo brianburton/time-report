@@ -2,7 +2,6 @@ extern crate scopeguard;
 
 mod append;
 mod core;
-mod menu;
 mod model;
 mod parse;
 mod random;

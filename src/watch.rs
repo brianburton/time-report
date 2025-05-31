@@ -2,13 +2,11 @@ use ratatui::{
     Terminal,
     layout::{Constraint, Layout},
     style::{Color, Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, Paragraph},
 };
 
-use crate::menu::{Menu, MenuItem};
 use crate::model::{Date, DateRange, DayEntry, Project};
 use crate::report;
+use crate::watch::paragraph::ParagraphBuilder;
 use crate::{append, parse};
 use anyhow::{Context, Result, anyhow};
 use crossterm::event::KeyCode;
@@ -16,14 +14,17 @@ use crossterm::event::{Event, poll, read};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use derive_getters::Getters;
 use im::{Vector, vector};
-use ratatui::buffer::Buffer;
-use ratatui::prelude::{Backend, Rect, Widget};
+use menu::{Menu, MenuItem};
+use ratatui::prelude::{Backend, Rect};
 use regex::Regex;
 use scopeguard::defer;
 use std::env;
 use std::fs;
 use std::process::Command;
 use std::time::{Duration, SystemTime};
+
+mod menu;
+mod paragraph;
 
 pub fn watch_and_report(filename: &str, dates: &dyn Fn() -> DateRange) -> Result<()> {
     let terminal = ratatui::init();
@@ -195,89 +196,6 @@ impl Editor for RealEditor {
             return Err(anyhow!("{}: editor command failed", error_context));
         }
         Ok(())
-    }
-}
-
-type SpanSpec = (String, Option<Style>);
-type LineSpec = Vector<SpanSpec>;
-
-#[derive(Debug, Clone, PartialEq)]
-struct ParagraphBuilder {
-    spans: Vector<SpanSpec>,
-    lines: Vector<LineSpec>,
-    border: Option<String>,
-}
-
-impl ParagraphBuilder {
-    fn new() -> Self {
-        Self {
-            spans: vector!(),
-            lines: vector!(),
-            border: None,
-        }
-    }
-
-    fn add_plain(&mut self, s: String) -> &mut Self {
-        self.add((s, None))
-    }
-
-    fn add_styled(&mut self, s: String, style: Style) -> &mut Self {
-        self.add((s, Some(style)))
-    }
-
-    fn add(&mut self, spec: SpanSpec) -> &mut Self {
-        self.spans.push_back(spec);
-        self
-    }
-
-    fn new_line(&mut self) -> &mut Self {
-        self.lines.push_back(self.spans.clone());
-        self.spans.clear();
-        self
-    }
-
-    fn bordered(&mut self) -> &mut Self {
-        self.border = Some(String::new());
-        self
-    }
-
-    fn titled(&mut self, title: String) -> &mut Self {
-        self.border = Some(title);
-        self
-    }
-
-    fn build(&self) -> Paragraph {
-        let lines: Vec<Line> = self
-            .lines
-            .iter()
-            .map(|spec| Self::build_line(spec))
-            .collect();
-        let para = Paragraph::new(lines);
-        match &self.border {
-            Some(title) if title.is_empty() => para.block(Block::bordered()),
-            Some(title) => para.block(Block::bordered().title(title.to_string())),
-            None => para,
-        }
-    }
-
-    fn build_line<'a>(spans: &'a Vector<SpanSpec>) -> Line<'a> {
-        let spans: Vec<Span<'a>> = spans
-            .iter()
-            .map(|(t, s)| match s {
-                Some(style) => Span::styled(t, *style),
-                None => Span::raw(t),
-            })
-            .collect();
-        Line::from(spans)
-    }
-}
-
-impl Widget for ParagraphBuilder {
-    fn render(self, area: Rect, buf: &mut Buffer)
-    where
-        Self: Sized,
-    {
-        self.build().render(area, buf)
     }
 }
 
