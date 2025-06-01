@@ -220,7 +220,7 @@ impl Region {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 enum UserRequest {
     Append,
     Edit,
@@ -292,8 +292,8 @@ impl<'a> WatchApp<'a> {
             match ui_command {
                 UICommand::Quit => return Ok(()),
                 UICommand::DoNothing => continue,
-                UICommand::Report(loaded) => on_screen = DisplayContent::Report(loaded),
                 UICommand::UpdateMenu => (),
+                UICommand::Report(loaded) => on_screen = DisplayContent::Report(loaded),
                 UICommand::DisplayWarnings(loaded) => on_screen = DisplayContent::Warnings(loaded),
                 UICommand::DisplayError(error) => on_screen = DisplayContent::Error(error),
             };
@@ -320,36 +320,32 @@ impl<'a> WatchApp<'a> {
     }
 
     fn process_user_request(&mut self, event: UserRequest) -> Result<UICommand> {
-        match event {
+        let result = match event {
             UserRequest::Quit => Ok(UICommand::Quit),
-            UserRequest::Reload => match self.load(true) {
-                Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
-                Err(e) => Ok(UICommand::DisplayError(e)),
-            },
+            UserRequest::Reload => self.load(true),
             UserRequest::Warnings => Ok(UICommand::DisplayWarnings(self.loaded.clone())),
-            UserRequest::Edit => match self.edit() {
-                Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
-                Err(e) => Ok(UICommand::DisplayError(e)),
-            },
-            UserRequest::Append => match self.append() {
-                Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
-                Err(e) => Ok(UICommand::DisplayError(e)),
-            },
-            UserRequest::Left => {
-                self.menu.left();
-                Ok(UICommand::UpdateMenu)
-            }
-            UserRequest::Right => {
-                self.menu.right();
-                Ok(UICommand::UpdateMenu)
-            }
+            UserRequest::Edit => self.edit(),
+            UserRequest::Append => self.append(),
+            UserRequest::Left => self.change_menu_selection(event),
+            UserRequest::Right => self.change_menu_selection(event),
             UserRequest::Resized => Ok(UICommand::Report(self.loaded.clone())),
-            UserRequest::Timeout => match self.load(false) {
-                Ok((true, loaded)) => Ok(UICommand::Report(loaded)),
-                Ok((false, _)) => Ok(UICommand::DoNothing),
-                Err(e) => Ok(UICommand::DisplayError(e)),
-            },
-        }
+            UserRequest::Timeout => self.load(false),
+        };
+        result.or_else(|e| Ok(UICommand::DisplayError(e)))
+    }
+
+    fn change_menu_selection(&mut self, user_request: UserRequest) -> Result<UICommand> {
+        match user_request {
+            UserRequest::Left => self.menu.left(),
+            UserRequest::Right => self.menu.right(),
+            x => {
+                return Err(anyhow!(
+                    "WatchApp.change_menu_selection: invalid command({:?})",
+                    x
+                ));
+            }
+        };
+        Ok(UICommand::UpdateMenu)
     }
 
     fn read_user_request(&mut self) -> Result<UserRequest> {
@@ -368,21 +364,21 @@ impl<'a> WatchApp<'a> {
         }
     }
 
-    fn load(&mut self, skip_delay: bool) -> Result<(bool, LoadedFile)> {
+    fn load(&mut self, force_reload: bool) -> Result<UICommand> {
         let current_file_millis = self.storage.timestamp(self.filename)?;
-        if current_file_millis == self.last_update_millis {
-            return Ok((false, self.loaded.clone()));
+        if current_file_millis == self.last_update_millis && !force_reload {
+            return Ok(UICommand::DoNothing);
         }
         let next_update_millis = self.last_update_millis + self.update_delay_millis;
-        if current_file_millis < next_update_millis && !skip_delay {
-            return Ok((false, self.loaded.clone()));
+        if current_file_millis < next_update_millis && !force_reload {
+            return Ok(UICommand::DoNothing);
         }
         self.last_update_millis = current_file_millis;
         self.loaded = self.storage.load(self.filename)?;
-        Ok((true, self.loaded.clone()))
+        Ok(UICommand::Report(self.loaded.clone()))
     }
 
-    fn append(&mut self) -> Result<(bool, LoadedFile)> {
+    fn append(&mut self) -> Result<UICommand> {
         self.load(true)?;
         let date = Date::today();
         let day_entries = self.loaded.day_entries();
@@ -394,7 +390,7 @@ impl<'a> WatchApp<'a> {
         self.load(true)
     }
 
-    fn edit(&mut self) -> Result<(bool, LoadedFile)> {
+    fn edit(&mut self) -> Result<UICommand> {
         let line_number = self
             .loaded
             .day_entries()
