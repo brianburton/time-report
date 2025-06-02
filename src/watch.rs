@@ -45,7 +45,8 @@ pub fn watch_and_report(filename: &str, dates: &dyn Fn() -> DateRange) -> Result
     result
 }
 
-enum RawReadResult {
+/// Subset of possible crossterm read() events supported by the application.
+enum ScreenEvent {
     Char(char),
     Enter,
     Left,
@@ -54,21 +55,8 @@ enum RawReadResult {
     Timeout,
 }
 
-#[derive(Copy, Clone)]
-enum ReadResult {
-    Append,
-    Edit,
-    Reload,
-    Warnings,
-    Quit,
-    Left,
-    Right,
-    Resized,
-    Timeout,
-}
-
 trait AppScreen {
-    fn read(&self, timeout: Duration) -> Result<RawReadResult>;
+    fn read(&self, timeout: Duration) -> Result<ScreenEvent>;
     fn draw(&mut self, region_factory: &dyn Fn(Rect) -> Vector<Region>) -> Result<()>;
     fn pause(&mut self) -> Result<()>;
     fn resume(&mut self) -> Result<()>;
@@ -94,22 +82,22 @@ struct RealAppScreen<T: Backend> {
 }
 
 impl<T: Backend> AppScreen for RealAppScreen<T> {
-    fn read(&self, timeout: Duration) -> Result<RawReadResult> {
+    fn read(&self, timeout: Duration) -> Result<ScreenEvent> {
         let error_context = "RealAppScreen.read";
         while poll(timeout).with_context(|| format!("{}: poll", error_context))? {
             match read().with_context(|| format!("{}: read", error_context))? {
                 Event::Key(event) => match event.code {
-                    KeyCode::Char(c) => return Ok(RawReadResult::Char(c)),
-                    KeyCode::Enter => return Ok(RawReadResult::Enter),
-                    KeyCode::Left => return Ok(RawReadResult::Left),
-                    KeyCode::Right => return Ok(RawReadResult::Right),
+                    KeyCode::Char(c) => return Ok(ScreenEvent::Char(c)),
+                    KeyCode::Enter => return Ok(ScreenEvent::Enter),
+                    KeyCode::Left => return Ok(ScreenEvent::Left),
+                    KeyCode::Right => return Ok(ScreenEvent::Right),
                     _ => {}
                 },
-                Event::Resize(_, _) => return Ok(RawReadResult::Resized),
+                Event::Resize(_, _) => return Ok(ScreenEvent::Resized),
                 _ => {}
             }
         }
-        Ok(RawReadResult::Timeout)
+        Ok(ScreenEvent::Timeout)
     }
 
     fn draw(&mut self, region_factory: &dyn Fn(Rect) -> Vector<Region>) -> Result<()> {
@@ -232,7 +220,20 @@ impl Region {
     }
 }
 
-enum Displayed {
+#[derive(Debug, Copy, Clone)]
+enum UserRequest {
+    Append,
+    Edit,
+    Reload,
+    Warnings,
+    Quit,
+    Left,
+    Right,
+    Resized,
+    Timeout,
+}
+
+enum DisplayContent {
     Report(LoadedFile),
     Warnings(LoadedFile),
     Error(anyhow::Error),
@@ -253,7 +254,7 @@ struct WatchApp<'a> {
     loaded: LoadedFile,
     read_timeout: Duration,
     update_delay_millis: u128,
-    menu: &'a mut Menu<ReadResult>,
+    menu: &'a mut Menu<UserRequest>,
     app_screen: &'a mut dyn AppScreen,
     storage: &'a mut dyn Storage,
     editor: &'a mut dyn Editor,
@@ -262,7 +263,7 @@ struct WatchApp<'a> {
 impl<'a> WatchApp<'a> {
     fn new(
         filename: &'a str,
-        menu: &'a mut Menu<ReadResult>,
+        menu: &'a mut Menu<UserRequest>,
         app_screen: &'a mut dyn AppScreen,
         storage: &'a mut dyn Storage,
         editor: &'a mut dyn Editor,
@@ -281,106 +282,103 @@ impl<'a> WatchApp<'a> {
     }
 
     fn run(&mut self, dates: &dyn Fn() -> DateRange) -> Result<()> {
-        let mut displayed = Displayed::Report(LoadedFile {
+        let mut on_screen = DisplayContent::Report(LoadedFile {
             day_entries: vector!(),
             warnings: vector!(),
         });
         loop {
-            let outcome = self.run_once()?;
-            match outcome {
+            let user_request = self.read_user_request()?;
+            let ui_command = self.process_user_request(user_request)?;
+            match ui_command {
                 UICommand::Quit => return Ok(()),
                 UICommand::DoNothing => continue,
-                UICommand::Report(loaded) => displayed = Displayed::Report(loaded),
                 UICommand::UpdateMenu => (),
-                UICommand::DisplayWarnings(loaded) => displayed = Displayed::Warnings(loaded),
-                UICommand::DisplayError(error) => displayed = Displayed::Error(error),
+                UICommand::Report(loaded) => on_screen = DisplayContent::Report(loaded),
+                UICommand::DisplayWarnings(loaded) => on_screen = DisplayContent::Warnings(loaded),
+                UICommand::DisplayError(error) => on_screen = DisplayContent::Error(error),
             };
-            self.update_screen(&displayed, dates)?;
+            self.update_screen(&on_screen, dates)?;
         }
     }
 
     fn update_screen(
         &mut self,
-        displayed: &Displayed,
+        what_to_display: &DisplayContent,
         dates: &dyn Fn() -> DateRange,
     ) -> Result<()> {
-        match displayed {
-            Displayed::Report(loaded_file) => self.app_screen.draw(&|screen_area| {
+        match what_to_display {
+            DisplayContent::Report(loaded_file) => self.app_screen.draw(&|screen_area| {
                 create_report_screen(screen_area, self.menu, self.filename, loaded_file, dates())
             }),
-            Displayed::Warnings(loaded_file) => self
+            DisplayContent::Warnings(loaded_file) => self
                 .app_screen
                 .draw(&|screen_area| create_warnings_screen(screen_area, self.menu, loaded_file)),
-            Displayed::Error(error) => self.app_screen.draw(&|screen_area| {
+            DisplayContent::Error(error) => self.app_screen.draw(&|screen_area| {
                 create_error_screen(screen_area, self.menu, self.filename, error)
             }),
         }
     }
 
-    fn run_once(&mut self) -> Result<UICommand> {
-        match self.read()? {
-            ReadResult::Quit => Ok(UICommand::Quit),
-            ReadResult::Reload => match self.load(true) {
-                Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
-                Err(e) => Ok(UICommand::DisplayError(e)),
-            },
-            ReadResult::Warnings => Ok(UICommand::DisplayWarnings(self.loaded.clone())),
-            ReadResult::Edit => match self.edit() {
-                Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
-                Err(e) => Ok(UICommand::DisplayError(e)),
-            },
-            ReadResult::Append => match self.append() {
-                Ok((_, loaded)) => Ok(UICommand::Report(loaded)),
-                Err(e) => Ok(UICommand::DisplayError(e)),
-            },
-            ReadResult::Left => {
-                self.menu.left();
-                Ok(UICommand::UpdateMenu)
-            }
-            ReadResult::Right => {
-                self.menu.right();
-                Ok(UICommand::UpdateMenu)
-            }
-            ReadResult::Resized => Ok(UICommand::Report(self.loaded.clone())),
-            ReadResult::Timeout => match self.load(false) {
-                Ok((true, loaded)) => Ok(UICommand::Report(loaded)),
-                Ok((false, _)) => Ok(UICommand::DoNothing),
-                Err(e) => Ok(UICommand::DisplayError(e)),
-            },
-        }
+    fn process_user_request(&mut self, event: UserRequest) -> Result<UICommand> {
+        let result = match event {
+            UserRequest::Quit => Ok(UICommand::Quit),
+            UserRequest::Reload => self.load(true),
+            UserRequest::Warnings => Ok(UICommand::DisplayWarnings(self.loaded.clone())),
+            UserRequest::Edit => self.edit(),
+            UserRequest::Append => self.append(),
+            UserRequest::Left => self.change_menu_selection(event),
+            UserRequest::Right => self.change_menu_selection(event),
+            UserRequest::Resized => Ok(UICommand::Report(self.loaded.clone())),
+            UserRequest::Timeout => self.load(false),
+        };
+        result.or_else(|e| Ok(UICommand::DisplayError(e)))
     }
 
-    fn read(&mut self) -> Result<ReadResult> {
+    fn change_menu_selection(&mut self, user_request: UserRequest) -> Result<UICommand> {
+        match user_request {
+            UserRequest::Left => self.menu.left(),
+            UserRequest::Right => self.menu.right(),
+            x => {
+                return Err(anyhow!(
+                    "WatchApp.change_menu_selection: invalid command({:?})",
+                    x
+                ));
+            }
+        };
+        Ok(UICommand::UpdateMenu)
+    }
+
+    fn read_user_request(&mut self) -> Result<UserRequest> {
         loop {
             match self.app_screen.read(self.read_timeout)? {
-                RawReadResult::Char(c) => match self.menu.select(c) {
+                ScreenEvent::Char(c) => match self.menu.select(c) {
                     Some(x) => return Ok(x),
                     None => continue,
                 },
-                RawReadResult::Enter => return Ok(self.menu.value()),
-                RawReadResult::Left => return Ok(ReadResult::Left),
-                RawReadResult::Right => return Ok(ReadResult::Right),
-                RawReadResult::Timeout => return Ok(ReadResult::Timeout),
-                RawReadResult::Resized => return Ok(ReadResult::Resized),
+                ScreenEvent::Enter => return Ok(self.menu.value()),
+                ScreenEvent::Left => return Ok(UserRequest::Left),
+                ScreenEvent::Right => return Ok(UserRequest::Right),
+                ScreenEvent::Timeout => return Ok(UserRequest::Timeout),
+                ScreenEvent::Resized => return Ok(UserRequest::Resized),
             }
         }
     }
 
-    fn load(&mut self, skip_delay: bool) -> Result<(bool, LoadedFile)> {
+    fn load(&mut self, force_reload: bool) -> Result<UICommand> {
         let current_file_millis = self.storage.timestamp(self.filename)?;
-        if current_file_millis == self.last_update_millis {
-            return Ok((false, self.loaded.clone()));
+        if current_file_millis == self.last_update_millis && !force_reload {
+            return Ok(UICommand::DoNothing);
         }
         let next_update_millis = self.last_update_millis + self.update_delay_millis;
-        if current_file_millis < next_update_millis && !skip_delay {
-            return Ok((false, self.loaded.clone()));
+        if current_file_millis < next_update_millis && !force_reload {
+            return Ok(UICommand::DoNothing);
         }
         self.last_update_millis = current_file_millis;
         self.loaded = self.storage.load(self.filename)?;
-        Ok((true, self.loaded.clone()))
+        Ok(UICommand::Report(self.loaded.clone()))
     }
 
-    fn append(&mut self) -> Result<(bool, LoadedFile)> {
+    fn append(&mut self) -> Result<UICommand> {
         self.load(true)?;
         let date = Date::today();
         let day_entries = self.loaded.day_entries();
@@ -392,7 +390,7 @@ impl<'a> WatchApp<'a> {
         self.load(true)
     }
 
-    fn edit(&mut self) -> Result<(bool, LoadedFile)> {
+    fn edit(&mut self) -> Result<UICommand> {
         let line_number = self
             .loaded
             .day_entries()
@@ -412,33 +410,33 @@ impl<'a> WatchApp<'a> {
     }
 }
 
-fn create_menu() -> Result<Menu<ReadResult>> {
+fn create_menu() -> Result<Menu<UserRequest>> {
     let menu_items = vector!(
         MenuItem::new(
-            ReadResult::Edit,
+            UserRequest::Edit,
             "Edit",
             format!("Edit the file using {} and reload.", get_editor()).as_str(),
             'e'
         ),
         MenuItem::new(
-            ReadResult::Append,
+            UserRequest::Append,
             "Append",
             "Add current date to the file along with some recently used projects.",
             'a'
         ),
         MenuItem::new(
-            ReadResult::Reload,
+            UserRequest::Reload,
             "Reload",
             "Reload file and display report.",
             'r'
         ),
         MenuItem::new(
-            ReadResult::Warnings,
+            UserRequest::Warnings,
             "Warnings",
             "Display all warnings.",
             'w'
         ),
-        MenuItem::new(ReadResult::Quit, "Quit", "Quit the program.", 'q')
+        MenuItem::new(UserRequest::Quit, "Quit", "Quit the program.", 'q')
     );
     Menu::new(menu_items)
 }
@@ -543,7 +541,7 @@ fn format_error(filename: &str, error: &anyhow::Error) -> ParagraphBuilder {
 
 fn create_warnings_screen(
     screen_area: Rect,
-    menu: &Menu<ReadResult>,
+    menu: &Menu<UserRequest>,
     file: &LoadedFile,
 ) -> Vector<Region> {
     use Constraint::{Length, Min};
@@ -557,7 +555,7 @@ fn create_warnings_screen(
 
 fn create_error_screen(
     screen_area: Rect,
-    menu: &Menu<ReadResult>,
+    menu: &Menu<UserRequest>,
     filename: &str,
     error: &anyhow::Error,
 ) -> Vector<Region> {
@@ -572,7 +570,7 @@ fn create_error_screen(
 
 fn create_report_screen(
     screen_area: Rect,
-    menu: &Menu<ReadResult>,
+    menu: &Menu<UserRequest>,
     filename: &str,
     file: &LoadedFile,
     dates: DateRange,
