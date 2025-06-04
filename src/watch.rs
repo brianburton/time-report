@@ -440,7 +440,7 @@ fn create_menu() -> Result<Menu<UserRequest>> {
         MenuItem::new(
             UserRequest::Edit,
             "Edit",
-            format!("Edit the file using {} and reload.", get_editor()).as_str(),
+            format!("Edit the file using {} and reload.", get_editor_name()).as_str(),
             'e'
         ),
         MenuItem::new(
@@ -617,8 +617,35 @@ fn get_editor() -> String {
     env::var("EDITOR").unwrap_or_else(|_| "vi".to_string())
 }
 
+fn get_editor_name() -> String {
+    let editor_command = get_editor();
+    let regex: Regex = Regex::new(r"^([^ ]*/)?([^ /]+)").unwrap();
+    let editor = regex.captures_iter(editor_command.as_str()).last();
+    editor.map(|c| c[2].to_string()).unwrap_or(editor_command)
+}
+
 fn supports_line_num_arg(editor: &str) -> bool {
     Regex::new(r"^(.*/)?((vim?)|(hx))$")
         .unwrap()
         .is_match(editor)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_editor_name() {
+        let key = "EDITOR";
+        unsafe {
+            env::set_var(key, "vi");
+            assert_eq!(get_editor_name(), "vi".to_string());
+
+            env::set_var(key, "/usr/bin/vi");
+            assert_eq!(get_editor_name(), "vi".to_string());
+
+            env::set_var(key, "/usr/bin/emacsclient -n");
+            assert_eq!(get_editor_name(), "emacsclient".to_string());
+        }
+    }
 }
