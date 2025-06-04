@@ -330,6 +330,12 @@ impl DateRange {
     }
 }
 
+impl Display for DateRange {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}-{}", self.first, self.last)
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Getters)]
 pub struct TimeRange {
     from: Time,

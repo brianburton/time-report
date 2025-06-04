@@ -34,12 +34,13 @@ pub fn watch_and_report(filename: &str, dates: &dyn Fn() -> DateRange) -> Result
     let mut editor = RealEditor {};
     let mut app_state = WatchApp::new(
         filename,
+        dates,
         &mut menu,
         &mut app_display,
         &mut storage,
         &mut editor,
     );
-    let result = app_state.run(dates);
+    let result = app_state.run();
     _ = app_display.terminal.clear();
     ratatui::restore();
     result
@@ -64,12 +65,12 @@ trait AppScreen {
 
 trait Storage {
     fn timestamp(&mut self, filename: &str) -> Result<u128>;
-    fn load(&mut self, filename: &str) -> Result<LoadedFile>;
+    fn load(&mut self, dates: DateRange, filename: &str) -> Result<LoadedFile>;
     fn append(
         &mut self,
         filename: &str,
         date: Date,
-        recent_projects: Vector<&Project>,
+        recent_projects: &Vector<Project>,
     ) -> Result<()>;
 }
 
@@ -148,16 +149,24 @@ impl Storage for RealStorage {
         Ok(millis)
     }
 
-    fn load(&mut self, filename: &str) -> Result<LoadedFile> {
+    fn load(&mut self, dates: DateRange, filename: &str) -> Result<LoadedFile> {
         let (day_entries, warnings) = parse::parse_file(filename)?;
-        Ok(LoadedFile::new(&day_entries, &warnings))
+        let min_date = dates.first().minus_days(30)?;
+        let recent_projects = append::recent_projects(&day_entries, min_date, 5);
+        let day_entries = report::day_entries_in_range(&dates, &day_entries);
+        Ok(LoadedFile::new(
+            dates,
+            &day_entries,
+            &warnings,
+            &recent_projects,
+        ))
     }
 
     fn append(
         &mut self,
         filename: &str,
         date: Date,
-        recent_projects: Vector<&Project>,
+        recent_projects: &Vector<Project>,
     ) -> Result<()> {
         append::append_to_file(filename, date, recent_projects)
     }
@@ -188,22 +197,33 @@ impl Editor for RealEditor {
 
 #[derive(Clone, Getters)]
 struct LoadedFile {
+    dates: DateRange,
     day_entries: Vector<DayEntry>,
     warnings: Vector<String>,
+    recent_projects: Vector<Project>,
 }
 
 impl LoadedFile {
-    fn new(day_entries: &Vector<DayEntry>, warnings: &Vector<String>) -> Self {
+    fn new(
+        dates: DateRange,
+        day_entries: &Vector<DayEntry>,
+        warnings: &Vector<String>,
+        recent_projects: &Vector<Project>,
+    ) -> Self {
         LoadedFile {
+            dates,
             day_entries: day_entries.clone(),
             warnings: warnings.clone(),
+            recent_projects: recent_projects.clone(),
         }
     }
 
-    fn empty() -> Self {
+    fn empty(dates: DateRange) -> Self {
         LoadedFile {
+            dates,
             day_entries: Vector::new(),
             warnings: Vector::new(),
+            recent_projects: Vector::new(),
         }
     }
 }
@@ -254,6 +274,7 @@ struct WatchApp<'a> {
     loaded: LoadedFile,
     read_timeout: Duration,
     update_delay_millis: u128,
+    dates: &'a dyn Fn() -> DateRange,
     menu: &'a mut Menu<UserRequest>,
     app_screen: &'a mut dyn AppScreen,
     storage: &'a mut dyn Storage,
@@ -263,6 +284,7 @@ struct WatchApp<'a> {
 impl<'a> WatchApp<'a> {
     fn new(
         filename: &'a str,
+        dates: &'a dyn Fn() -> DateRange,
         menu: &'a mut Menu<UserRequest>,
         app_screen: &'a mut dyn AppScreen,
         storage: &'a mut dyn Storage,
@@ -270,7 +292,8 @@ impl<'a> WatchApp<'a> {
     ) -> WatchApp<'a> {
         WatchApp {
             filename,
-            loaded: LoadedFile::empty(),
+            dates,
+            loaded: LoadedFile::empty(dates()),
             last_update_millis: 0,
             update_delay_millis: 500,
             read_timeout: Duration::from_millis(100),
@@ -281,11 +304,8 @@ impl<'a> WatchApp<'a> {
         }
     }
 
-    fn run(&mut self, dates: &dyn Fn() -> DateRange) -> Result<()> {
-        let mut on_screen = DisplayContent::Report(LoadedFile {
-            day_entries: vector!(),
-            warnings: vector!(),
-        });
+    fn run(&mut self) -> Result<()> {
+        let mut on_screen = DisplayContent::Report(self.loaded.clone());
         loop {
             let user_request = self.read_user_request()?;
             let ui_command = self.process_user_request(user_request)?;
@@ -297,18 +317,14 @@ impl<'a> WatchApp<'a> {
                 UICommand::DisplayWarnings(loaded) => on_screen = DisplayContent::Warnings(loaded),
                 UICommand::DisplayError(error) => on_screen = DisplayContent::Error(error),
             };
-            self.update_screen(&on_screen, dates)?;
+            self.update_screen(&on_screen)?;
         }
     }
 
-    fn update_screen(
-        &mut self,
-        what_to_display: &DisplayContent,
-        dates: &dyn Fn() -> DateRange,
-    ) -> Result<()> {
+    fn update_screen(&mut self, what_to_display: &DisplayContent) -> Result<()> {
         match what_to_display {
             DisplayContent::Report(loaded_file) => self.app_screen.draw(&|screen_area| {
-                create_report_screen(screen_area, self.menu, self.filename, loaded_file, dates())
+                create_report_screen(screen_area, self.menu, self.filename, loaded_file)
             }),
             DisplayContent::Warnings(loaded_file) => self
                 .app_screen
@@ -373,9 +389,19 @@ impl<'a> WatchApp<'a> {
         if current_file_millis < next_update_millis && !force_reload {
             return Ok(UICommand::DoNothing);
         }
+        let dates = self.date_range();
         self.last_update_millis = current_file_millis;
-        self.loaded = self.storage.load(self.filename)?;
+        self.loaded = self.storage.load(dates, self.filename)?;
+        if self.loaded.day_entries.is_empty() {
+            self.loaded
+                .warnings
+                .push_front(format!("No day entries found in date range: {}.", dates));
+        }
         Ok(UICommand::Report(self.loaded.clone()))
+    }
+
+    fn date_range(&self) -> DateRange {
+        (self.dates)()
     }
 
     fn append(&mut self) -> Result<UICommand> {
@@ -384,9 +410,8 @@ impl<'a> WatchApp<'a> {
         let day_entries = self.loaded.day_entries();
         append::validate_date(day_entries, date)?;
 
-        let min_date = date.minus_days(30)?;
-        let recent_projects = append::recent_projects(day_entries, min_date, 5);
-        self.storage.append(self.filename, date, recent_projects)?;
+        self.storage
+            .append(self.filename, date, &self.loaded.recent_projects)?;
         self.load(true)
     }
 
@@ -505,9 +530,9 @@ fn format_warnings(file: &LoadedFile) -> ParagraphBuilder {
     builder
 }
 
-fn format_report(file: &LoadedFile, dates: DateRange) -> Result<ParagraphBuilder> {
+fn format_report(file: &LoadedFile) -> Result<ParagraphBuilder> {
     let mut builder = ParagraphBuilder::new();
-    for line in report::create_report(dates, &file.day_entries)? {
+    for line in report::create_report(file.dates, &file.day_entries)? {
         builder.add_plain(line).new_line();
     }
     builder.titled("Report".to_string());
@@ -573,9 +598,8 @@ fn create_report_screen(
     menu: &Menu<UserRequest>,
     filename: &str,
     file: &LoadedFile,
-    dates: DateRange,
 ) -> Vector<Region> {
-    let report = match format_report(file, dates) {
+    let report = match format_report(file) {
         Ok(r) => r,
         Err(e) => return create_error_screen(screen_area, menu, filename, &e),
     };

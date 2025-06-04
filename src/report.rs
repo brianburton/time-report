@@ -103,19 +103,7 @@ fn billable_minutes(m: u32) -> u32 {
     m - (m % 15)
 }
 
-fn day_entries_in_range<'a>(
-    dates: &DateRange,
-    day_entries: &'a Vector<DayEntry>,
-) -> Vector<&'a DayEntry> {
-    let mut result: Vector<&'a DayEntry> = day_entries
-        .iter()
-        .filter(|e| dates.contains(e.date()))
-        .collect();
-    result.sort_by(|a, b| a.date().cmp(b.date()));
-    result
-}
-
-fn unique_projects(day_entries: &Vector<&DayEntry>) -> OrdSet<Project> {
+fn unique_projects(day_entries: &Vector<DayEntry>) -> OrdSet<Project> {
     day_entries
         .iter()
         .flat_map(|e| e.projects().iter().map(|p| p.project().clone()))
@@ -131,23 +119,23 @@ struct ReportData {
     weekdays: usize,
 }
 
-pub fn create_report(
-    dates: DateRange,
-    all_day_entries: &Vector<DayEntry>,
-) -> Result<Vector<String>> {
-    let data = compute_report_data(dates, all_day_entries)?;
+pub fn create_report(dates: DateRange, day_entries: &Vector<DayEntry>) -> Result<Vector<String>> {
+    let data = compute_report_data(dates, day_entries)?;
     let lines = render_report_data(&data)?;
     Ok(lines)
 }
 
-fn compute_report_data(dates: DateRange, all_day_entries: &Vector<DayEntry>) -> Result<ReportData> {
-    let day_entries = day_entries_in_range(&dates, all_day_entries);
-    if day_entries.is_empty() {
-        return Err(anyhow!(
-            "compute_report_data: no data available for date range"
-        ));
-    }
+pub fn day_entries_in_range(dates: &DateRange, day_entries: &Vector<DayEntry>) -> Vector<DayEntry> {
+    let mut result: Vector<DayEntry> = day_entries
+        .iter()
+        .filter(|e| dates.contains(e.date()))
+        .cloned()
+        .collect();
+    result.sort_by(|a, b| a.date().cmp(b.date()));
+    result
+}
 
+fn compute_report_data(dates: DateRange, day_entries: &Vector<DayEntry>) -> Result<ReportData> {
     let mut weeks = HashMap::<u32, WeekData>::new();
     let week_nums = dates.iter().map(|d| d.week_num()).collect::<OrdSet<u32>>();
     for w in week_nums {
@@ -157,7 +145,7 @@ fn compute_report_data(dates: DateRange, all_day_entries: &Vector<DayEntry>) -> 
     let mut current_data = WeekData::new();
     let mut current_week = dates.first().week_num();
 
-    for entry in &day_entries {
+    for entry in day_entries {
         let entry_week = entry.date().week_num();
         if entry_week != current_week {
             weeks.insert(current_week, current_data.clone());
@@ -170,7 +158,7 @@ fn compute_report_data(dates: DateRange, all_day_entries: &Vector<DayEntry>) -> 
 
     weeks.insert(current_week, current_data);
 
-    let projects = unique_projects(&day_entries);
+    let projects = unique_projects(day_entries);
     let last_date = day_entries.last().map(|e| *e.date());
     let weekdays = last_date
         .map(|ld| {
