@@ -26,7 +26,7 @@ mod menu;
 mod paragraph;
 
 pub fn watch_and_report(filename: &str, dates: &dyn Fn() -> DateRange) -> Result<()> {
-    let mut menu = create_menu()?;
+    let menu = create_menu()?;
     let mut app_display = RealAppScreen {
         terminal: ratatui::init(),
     };
@@ -35,7 +35,7 @@ pub fn watch_and_report(filename: &str, dates: &dyn Fn() -> DateRange) -> Result
     let mut app_state = WatchApp::new(
         filename,
         dates,
-        &mut menu,
+        menu,
         &mut app_display,
         &mut storage,
         &mut editor,
@@ -150,6 +150,7 @@ impl Storage for RealStorage {
     }
 
     fn load(&mut self, dates: DateRange, filename: &str) -> Result<LoadedFile> {
+        let current_file_millis = self.timestamp(filename)?;
         let (day_entries, warnings) = parse::parse_file(filename)?;
         let min_date = dates.first().minus_days(30)?;
         let recent_projects = append::recent_projects(&day_entries, min_date, 5);
@@ -159,6 +160,7 @@ impl Storage for RealStorage {
             &day_entries,
             &warnings,
             &recent_projects,
+            current_file_millis,
         ))
     }
 
@@ -201,6 +203,7 @@ struct LoadedFile {
     day_entries: Vector<DayEntry>,
     warnings: Vector<String>,
     recent_projects: Vector<Project>,
+    load_time_millis: u128,
 }
 
 impl LoadedFile {
@@ -209,12 +212,14 @@ impl LoadedFile {
         day_entries: &Vector<DayEntry>,
         warnings: &Vector<String>,
         recent_projects: &Vector<Project>,
+        load_time_millis: u128,
     ) -> Self {
         LoadedFile {
             dates,
             day_entries: day_entries.clone(),
             warnings: warnings.clone(),
             recent_projects: recent_projects.clone(),
+            load_time_millis,
         }
     }
 
@@ -224,6 +229,7 @@ impl LoadedFile {
             day_entries: Vector::new(),
             warnings: Vector::new(),
             recent_projects: Vector::new(),
+            load_time_millis: 0,
         }
     }
 }
@@ -268,14 +274,15 @@ enum UICommand {
     DisplayError(anyhow::Error),
 }
 
+struct AppState {}
+
 struct WatchApp<'a> {
-    filename: &'a str,
-    last_update_millis: u128,
     loaded: LoadedFile,
+    menu: Menu<UserRequest>,
+    filename: &'a str,
     read_timeout: Duration,
     update_delay_millis: u128,
     dates: &'a dyn Fn() -> DateRange,
-    menu: &'a mut Menu<UserRequest>,
     app_screen: &'a mut dyn AppScreen,
     storage: &'a mut dyn Storage,
     editor: &'a mut dyn Editor,
@@ -285,7 +292,7 @@ impl<'a> WatchApp<'a> {
     fn new(
         filename: &'a str,
         dates: &'a dyn Fn() -> DateRange,
-        menu: &'a mut Menu<UserRequest>,
+        menu: Menu<UserRequest>,
         app_screen: &'a mut dyn AppScreen,
         storage: &'a mut dyn Storage,
         editor: &'a mut dyn Editor,
@@ -294,7 +301,6 @@ impl<'a> WatchApp<'a> {
             filename,
             dates,
             loaded: LoadedFile::empty(dates()),
-            last_update_millis: 0,
             update_delay_millis: 500,
             read_timeout: Duration::from_millis(100),
             menu,
@@ -324,13 +330,13 @@ impl<'a> WatchApp<'a> {
     fn update_screen(&mut self, what_to_display: &DisplayContent) -> Result<()> {
         match what_to_display {
             DisplayContent::Report(loaded_file) => self.app_screen.draw(&|screen_area| {
-                create_report_screen(screen_area, self.menu, self.filename, loaded_file)
+                create_report_screen(screen_area, &self.menu, self.filename, loaded_file)
             }),
             DisplayContent::Warnings(loaded_file) => self
                 .app_screen
-                .draw(&|screen_area| create_warnings_screen(screen_area, self.menu, loaded_file)),
+                .draw(&|screen_area| create_warnings_screen(screen_area, &self.menu, loaded_file)),
             DisplayContent::Error(error) => self.app_screen.draw(&|screen_area| {
-                create_error_screen(screen_area, self.menu, self.filename, error)
+                create_error_screen(screen_area, &self.menu, self.filename, error)
             }),
         }
     }
@@ -352,8 +358,8 @@ impl<'a> WatchApp<'a> {
 
     fn change_menu_selection(&mut self, user_request: UserRequest) -> Result<UICommand> {
         match user_request {
-            UserRequest::Left => self.menu.left(),
-            UserRequest::Right => self.menu.right(),
+            UserRequest::Left => self.menu = self.menu.left(),
+            UserRequest::Right => self.menu = self.menu.right(),
             x => {
                 return Err(anyhow!(
                     "WatchApp.change_menu_selection: invalid command({:?})",
@@ -368,7 +374,10 @@ impl<'a> WatchApp<'a> {
         loop {
             match self.app_screen.read(self.read_timeout)? {
                 ScreenEvent::Char(c) => match self.menu.select(c) {
-                    Some(x) => return Ok(x),
+                    Some(x) => {
+                        self.menu = x;
+                        return Ok(self.menu.value());
+                    }
                     None => continue,
                 },
                 ScreenEvent::Enter => return Ok(self.menu.value()),
@@ -382,15 +391,14 @@ impl<'a> WatchApp<'a> {
 
     fn load(&mut self, force_reload: bool) -> Result<UICommand> {
         let current_file_millis = self.storage.timestamp(self.filename)?;
-        if current_file_millis == self.last_update_millis && !force_reload {
+        if current_file_millis == self.loaded.load_time_millis && !force_reload {
             return Ok(UICommand::DoNothing);
         }
-        let next_update_millis = self.last_update_millis + self.update_delay_millis;
+        let next_update_millis = self.loaded.load_time_millis + self.update_delay_millis;
         if current_file_millis < next_update_millis && !force_reload {
             return Ok(UICommand::DoNothing);
         }
         let dates = self.date_range();
-        self.last_update_millis = current_file_millis;
         self.loaded = self.storage.load(dates, self.filename)?;
         if self.loaded.day_entries.is_empty() {
             self.loaded
