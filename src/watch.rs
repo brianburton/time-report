@@ -390,22 +390,29 @@ impl<'a> WatchApp<'a> {
     }
 
     fn load(&mut self, force_reload: bool) -> Result<UICommand> {
-        let current_file_millis = self.storage.timestamp(self.filename)?;
-        if current_file_millis == self.loaded.load_time_millis && !force_reload {
-            return Ok(UICommand::DoNothing);
-        }
-        let next_update_millis = self.loaded.load_time_millis + self.update_delay_millis;
-        if current_file_millis < next_update_millis && !force_reload {
-            return Ok(UICommand::DoNothing);
-        }
         let dates = self.date_range();
+        if !self.load_needed(dates, force_reload)? {
+            return Ok(UICommand::DoNothing);
+        }
+
         self.loaded = self.storage.load(dates, self.filename)?;
         if self.loaded.day_entries.is_empty() {
             self.loaded
                 .warnings
                 .push_front(format!("No day entries found in date range: {}.", dates));
         }
+
         Ok(UICommand::Report(self.loaded.clone()))
+    }
+
+    fn load_needed(&mut self, dates: DateRange, force_reload: bool) -> Result<bool> {
+        if force_reload || self.loaded.dates != dates {
+            return Ok(true);
+        }
+
+        let current_file_millis = self.storage.timestamp(self.filename)?;
+        let next_update_millis = self.loaded.load_time_millis + self.update_delay_millis;
+        Ok(current_file_millis >= next_update_millis)
     }
 
     fn date_range(&self) -> DateRange {

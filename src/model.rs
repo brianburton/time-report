@@ -301,7 +301,7 @@ impl Iterator for DateIter {
     }
 }
 
-#[derive(Debug, Getters, Clone, Copy)]
+#[derive(Debug, Getters, Clone, Copy, PartialEq)]
 pub struct DateRange {
     first: Date,
     last: Date,
