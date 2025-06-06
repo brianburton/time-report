@@ -20,7 +20,7 @@ use regex::Regex;
 use std::env;
 use std::fs;
 use std::process::Command;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 mod menu;
 mod paragraph;
@@ -32,6 +32,7 @@ pub fn watch_and_report(filename: &str, dates: &dyn Fn() -> DateRange) -> Result
     };
     let mut storage = RealStorage {};
     let mut editor = RealEditor {};
+    let mut clock = RealClock {};
     let mut app_state = WatchApp::new(
         filename,
         dates,
@@ -39,6 +40,7 @@ pub fn watch_and_report(filename: &str, dates: &dyn Fn() -> DateRange) -> Result
         &mut app_display,
         &mut storage,
         &mut editor,
+        &mut clock,
     );
     let result = app_state.run();
     _ = app_display.terminal.clear();
@@ -76,6 +78,10 @@ trait Storage {
 
 trait Editor {
     fn edit_file(&self, filename: &str, line_number: u32) -> Result<()>;
+}
+
+trait Clock {
+    fn current_millis(&self) -> u128;
 }
 
 struct RealAppScreen<T: Backend> {
@@ -197,6 +203,16 @@ impl Editor for RealEditor {
     }
 }
 
+struct RealClock {}
+impl Clock for RealClock {
+    fn current_millis(&self) -> u128 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("unable to read current time")
+            .as_millis()
+    }
+}
+
 #[derive(Clone, Getters)]
 struct LoadedFile {
     dates: DateRange,
@@ -286,6 +302,7 @@ struct WatchApp<'a> {
     app_screen: &'a mut dyn AppScreen,
     storage: &'a mut dyn Storage,
     editor: &'a mut dyn Editor,
+    clock: &'a mut dyn Clock,
 }
 
 impl<'a> WatchApp<'a> {
@@ -296,6 +313,7 @@ impl<'a> WatchApp<'a> {
         app_screen: &'a mut dyn AppScreen,
         storage: &'a mut dyn Storage,
         editor: &'a mut dyn Editor,
+        clock: &'a mut dyn Clock,
     ) -> WatchApp<'a> {
         WatchApp {
             filename,
@@ -307,6 +325,7 @@ impl<'a> WatchApp<'a> {
             app_screen,
             storage,
             editor,
+            clock,
         }
     }
 
@@ -411,8 +430,13 @@ impl<'a> WatchApp<'a> {
         }
 
         let current_file_millis = self.storage.timestamp(self.filename)?;
-        let next_update_millis = self.loaded.load_time_millis + self.update_delay_millis;
-        Ok(current_file_millis >= next_update_millis)
+        if current_file_millis == self.loaded.load_time_millis {
+            return Ok(false);
+        }
+
+        let current_time_millis = self.clock.current_millis();
+        let next_update_millis = current_time_millis - self.update_delay_millis;
+        Ok(current_file_millis < next_update_millis)
     }
 
     fn date_range(&self) -> DateRange {
