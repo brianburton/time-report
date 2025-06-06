@@ -292,29 +292,41 @@ enum UICommand {
 
 struct AppState {}
 
-struct WatchApp<'a> {
+struct WatchApp<'a, TAppScreen, TStorage, TEditor, TClock>
+where
+    TAppScreen: AppScreen,
+    TStorage: Storage,
+    TEditor: Editor,
+    TClock: Clock,
+{
     loaded: LoadedFile,
     menu: Menu<UserRequest>,
     filename: &'a str,
     read_timeout: Duration,
     update_delay_millis: u128,
     dates: &'a dyn Fn() -> DateRange,
-    app_screen: &'a mut dyn AppScreen,
-    storage: &'a mut dyn Storage,
-    editor: &'a mut dyn Editor,
-    clock: &'a mut dyn Clock,
+    app_screen: &'a mut TAppScreen,
+    storage: &'a mut TStorage,
+    editor: &'a mut TEditor,
+    clock: &'a mut TClock,
 }
 
-impl<'a> WatchApp<'a> {
+impl<'a, TAppScreen, TStorage, TEditor, TClock> WatchApp<'a, TAppScreen, TStorage, TEditor, TClock>
+where
+    TAppScreen: AppScreen,
+    TStorage: Storage,
+    TEditor: Editor,
+    TClock: Clock,
+{
     fn new(
         filename: &'a str,
         dates: &'a dyn Fn() -> DateRange,
         menu: Menu<UserRequest>,
-        app_screen: &'a mut dyn AppScreen,
-        storage: &'a mut dyn Storage,
-        editor: &'a mut dyn Editor,
-        clock: &'a mut dyn Clock,
-    ) -> WatchApp<'a> {
+        app_screen: &'a mut TAppScreen,
+        storage: &'a mut TStorage,
+        editor: &'a mut TEditor,
+        clock: &'a mut TClock,
+    ) -> WatchApp<'a, TAppScreen, TStorage, TEditor, TClock> {
         WatchApp {
             filename,
             dates,
