@@ -366,7 +366,7 @@ where
                     Ok(report) => self.app_screen.draw(&report),
                     Err(error) => {
                         self.app_screen
-                            .draw(&ErrorScreen::new(&self.menu, &self.filename, &error))
+                            .draw(&ErrorScreen::new(&self.menu, self.filename, &error))
                     }
                 }
             }
