@@ -207,7 +207,11 @@ impl Editor for RealEditor {
             .wait()
             .with_context(|| format!("{}: wait", error_context))?;
         if !status.success() {
-            return Err(anyhow!("{}: editor command failed: {}", error_context, status));
+            return Err(anyhow!(
+                "{}: editor command failed: {}",
+                error_context,
+                status
+            ));
         }
         Ok(())
     }
@@ -697,7 +701,7 @@ impl Renderable for ErrorScreen {
         Self: Sized,
     {
         use Constraint::{Length, Min};
-        let vertical = Layout::vertical([Length(MENU_HEIGHT), Min(0), Length(WARNING_HEIGHT)]);
+        let vertical = Layout::vertical([Length(MENU_HEIGHT), Min(0)]);
         let [menu_area, error_area] = vertical.areas(area);
         self.menu.build().render(menu_area, buf);
         self.error.build().render(error_area, buf);
