@@ -15,6 +15,7 @@ use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use derive_getters::Getters;
 use im::{Vector, vector};
 use menu::{Menu, MenuItem};
+use mockall::automock;
 use ratatui::buffer::Buffer;
 use ratatui::prelude::{Backend, Rect, Widget};
 use regex::Regex;
@@ -63,6 +64,7 @@ trait Renderable {
     fn render(&self, area: Rect, buf: &mut Buffer);
 }
 
+#[automock]
 trait AppScreen {
     fn read(&self, timeout: Duration) -> Result<ScreenEvent>;
     fn draw(&mut self, screen: &dyn Renderable) -> Result<()>;
@@ -70,6 +72,7 @@ trait AppScreen {
     fn resume(&mut self) -> Result<()>;
 }
 
+#[automock]
 trait Storage {
     fn timestamp(&mut self, filename: &str) -> Result<u128>;
     fn load(&mut self, dates: DateRange, filename: &str) -> Result<LoadedFile>;
@@ -81,10 +84,12 @@ trait Storage {
     ) -> Result<()>;
 }
 
+#[automock]
 trait Editor {
     fn edit_file(&self, filename: &str, line_number: u32) -> Result<()>;
 }
 
+#[automock]
 trait Clock {
     fn current_millis(&self) -> u128;
 }
@@ -714,6 +719,13 @@ fn supports_line_num_arg(editor: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_mock_clock() {
+        let mut c = MockClock::new();
+        c.expect_current_millis().return_const(1000u128);
+        assert_eq!(c.current_millis(), 1000u128);
+    }
 
     #[test]
     fn test_get_editor_name() {
