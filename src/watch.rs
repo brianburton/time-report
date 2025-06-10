@@ -207,7 +207,7 @@ impl Editor for RealEditor {
             .wait()
             .with_context(|| format!("{}: wait", error_context))?;
         if !status.success() {
-            return Err(anyhow!("{}: editor command failed", error_context));
+            return Err(anyhow!("{}: editor command failed: {}", error_context, status));
         }
         Ok(())
     }
