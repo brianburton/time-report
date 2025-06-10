@@ -605,11 +605,12 @@ fn format_error(filename: &str, error: &anyhow::Error) -> ParagraphBuilder {
         .map(|s| s.to_string())
         .collect::<Vec<_>>();
     let mut builder = ParagraphBuilder::new();
-    builder.add_styled(format!("   filename: {}", filename), style);
     builder
+        .add_styled(format!("   filename: {}", filename), style)
+        .new_line()
         .add_styled(
             format!(
-                "    message: {:?}",
+                "    message: {}",
                 lines.first().map(|s| s.as_ref()).unwrap_or("")
             ),
             style,
