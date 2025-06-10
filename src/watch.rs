@@ -145,6 +145,14 @@ impl<T: Backend> AppScreen for RealAppScreen<T> {
 }
 
 struct RealStorage {}
+impl RealStorage {
+    fn system_time_to_millis(time: SystemTime) -> Result<u128> {
+        time.duration_since(SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .map_err(Into::into)
+    }
+}
+
 impl Storage for RealStorage {
     fn timestamp(&mut self, filename: &str) -> Result<u128> {
         let error_context = "RealStorage.timestamp";
@@ -153,11 +161,8 @@ impl Storage for RealStorage {
         let modified = metadata
             .modified()
             .with_context(|| format!("{}: modified", error_context))?;
-        let millis = modified
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .with_context(|| format!("{}: duration_since", error_context))?
-            .as_millis();
-        Ok(millis)
+        Self::system_time_to_millis(modified)
+            .with_context(|| format!("{}: system_time_to_millis", error_context))
     }
 
     fn load(&mut self, dates: DateRange, filename: &str) -> Result<LoadedFile> {
@@ -719,6 +724,9 @@ fn supports_line_num_arg(editor: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{DateTime, Utc};
+    use filetime::{FileTime, set_file_times};
+    use tempfile::NamedTempFile;
 
     #[test]
     fn test_mock_clock() {
@@ -740,5 +748,34 @@ mod tests {
             env::set_var(key, "/usr/bin/emacsclient -n");
             assert_eq!(get_editor_name(), "emacsclient".to_string());
         }
+    }
+
+    #[test]
+    fn test_millis() {
+        let datetime_str = "2024-06-09T12:34:56Z";
+        let dt: DateTime<Utc> = datetime_str.parse().unwrap(); // ISO 8601 format
+        let system_time: SystemTime = SystemTime::from(dt);
+        let millis = RealStorage::system_time_to_millis(system_time).unwrap();
+        assert_eq!(millis, 1717936496000);
+    }
+
+    #[test]
+    fn test_timestamp() {
+        let datetime_str = "2024-06-09T12:34:55Z";
+        let dt: DateTime<Utc> = datetime_str.parse().unwrap(); // ISO 8601 format
+        let system_time: SystemTime = SystemTime::from(dt);
+
+        let temp_file = NamedTempFile::new().unwrap();
+        let path = temp_file.path();
+
+        // Set the access and modification times
+        let new_atime = FileTime::from_system_time(system_time);
+        set_file_times(path, new_atime, new_atime).unwrap();
+
+        let mut storage = RealStorage {};
+        assert_eq!(
+            storage.timestamp(path.to_str().unwrap()).unwrap(),
+            1717936495000
+        );
     }
 }
