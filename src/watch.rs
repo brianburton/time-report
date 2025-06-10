@@ -15,7 +15,8 @@ use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use derive_getters::Getters;
 use im::{Vector, vector};
 use menu::{Menu, MenuItem};
-use ratatui::prelude::{Backend, Rect};
+use ratatui::buffer::Buffer;
+use ratatui::prelude::{Backend, Rect, Widget};
 use regex::Regex;
 use std::env;
 use std::fs;
@@ -58,9 +59,13 @@ enum ScreenEvent {
     Timeout,
 }
 
+trait Renderable {
+    fn render(&self, area: Rect, buf: &mut Buffer);
+}
+
 trait AppScreen {
     fn read(&self, timeout: Duration) -> Result<ScreenEvent>;
-    fn draw(&mut self, region_factory: &dyn Fn(Rect) -> Vector<Region>) -> Result<()>;
+    fn draw(&mut self, screen: &dyn Renderable) -> Result<()>;
     fn pause(&mut self) -> Result<()>;
     fn resume(&mut self) -> Result<()>;
 }
@@ -107,15 +112,10 @@ impl<T: Backend> AppScreen for RealAppScreen<T> {
         Ok(ScreenEvent::Timeout)
     }
 
-    fn draw(&mut self, region_factory: &dyn Fn(Rect) -> Vector<Region>) -> Result<()> {
+    fn draw(&mut self, screen: &dyn Renderable) -> Result<()> {
         let error_context = "RealAppScreen.draw";
         self.terminal
-            .draw(|frame| {
-                let regions = region_factory(frame.area());
-                for region in regions.iter() {
-                    frame.render_widget(region.paragraph.build(), region.area);
-                }
-            })
+            .draw(|frame| screen.render(frame.area(), frame.buffer_mut()))
             .with_context(|| format!("{}: failed to draw terminal", error_context))
             .map(|_| ())
     }
@@ -250,18 +250,6 @@ impl LoadedFile {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-struct Region {
-    paragraph: ParagraphBuilder,
-    area: Rect,
-}
-
-impl Region {
-    fn new(paragraph: ParagraphBuilder, area: Rect) -> Self {
-        Region { paragraph, area }
-    }
-}
-
 #[derive(Debug, Copy, Clone)]
 enum UserRequest {
     Append,
@@ -289,8 +277,6 @@ enum UICommand {
     DisplayWarnings(LoadedFile),
     DisplayError(anyhow::Error),
 }
-
-struct AppState {}
 
 struct WatchApp<'a, TAppScreen, TStorage, TEditor, TClock>
 where
@@ -360,15 +346,23 @@ where
 
     fn update_screen(&mut self, what_to_display: &DisplayContent) -> Result<()> {
         match what_to_display {
-            DisplayContent::Report(loaded_file) => self.app_screen.draw(&|screen_area| {
-                create_report_screen(screen_area, &self.menu, self.filename, loaded_file)
-            }),
+            DisplayContent::Report(loaded_file) => {
+                let report = ReportScreen::new(&self.menu, loaded_file);
+                match report {
+                    Ok(report) => self.app_screen.draw(&report),
+                    Err(error) => {
+                        self.app_screen
+                            .draw(&ErrorScreen::new(&self.menu, &self.filename, &error))
+                    }
+                }
+            }
             DisplayContent::Warnings(loaded_file) => self
                 .app_screen
-                .draw(&|screen_area| create_warnings_screen(screen_area, &self.menu, loaded_file)),
-            DisplayContent::Error(error) => self.app_screen.draw(&|screen_area| {
-                create_error_screen(screen_area, &self.menu, self.filename, error)
-            }),
+                .draw(&WarningsScreen::new(&self.menu, loaded_file)),
+            DisplayContent::Error(error) => {
+                self.app_screen
+                    .draw(&ErrorScreen::new(&self.menu, self.filename, error))
+            }
         }
     }
 
@@ -615,53 +609,89 @@ fn format_error(filename: &str, error: &anyhow::Error) -> ParagraphBuilder {
     builder
 }
 
-fn create_warnings_screen(
-    screen_area: Rect,
-    menu: &Menu<UserRequest>,
-    file: &LoadedFile,
-) -> Vector<Region> {
-    use Constraint::{Length, Min};
-    let vertical = Layout::vertical([Length(MENU_HEIGHT), Min(0)]);
-    let [menu_area, warnings_area] = vertical.areas(screen_area);
-    vector!(
-        Region::new(format_menu(menu), menu_area),
-        Region::new(format_warnings(file), warnings_area)
-    )
+struct ReportScreen {
+    menu: ParagraphBuilder,
+    report: ParagraphBuilder,
+    warnings: ParagraphBuilder,
 }
 
-fn create_error_screen(
-    screen_area: Rect,
-    menu: &Menu<UserRequest>,
-    filename: &str,
-    error: &anyhow::Error,
-) -> Vector<Region> {
-    use Constraint::{Length, Min};
-    let vertical = Layout::vertical([Length(MENU_HEIGHT), Min(0)]);
-    let [menu_area, error_area] = vertical.areas(screen_area);
-    vector!(
-        Region::new(format_menu(menu), menu_area),
-        Region::new(format_error(filename, error), error_area)
-    )
+impl ReportScreen {
+    fn new(menu: &Menu<UserRequest>, file: &LoadedFile) -> Result<Self> {
+        let screen = ReportScreen {
+            menu: format_menu(menu),
+            report: format_report(file)?,
+            warnings: format_warnings_summary(file),
+        };
+        Ok(screen)
+    }
 }
 
-fn create_report_screen(
-    screen_area: Rect,
-    menu: &Menu<UserRequest>,
-    filename: &str,
-    file: &LoadedFile,
-) -> Vector<Region> {
-    let report = match format_report(file) {
-        Ok(r) => r,
-        Err(e) => return create_error_screen(screen_area, menu, filename, &e),
-    };
-    use Constraint::{Length, Min};
-    let vertical = Layout::vertical([Length(MENU_HEIGHT), Min(0), Length(WARNING_HEIGHT)]);
-    let [menu_area, report_area, warnings_area] = vertical.areas(screen_area);
-    vector!(
-        Region::new(format_menu(menu), menu_area),
-        Region::new(report, report_area),
-        Region::new(format_warnings_summary(file), warnings_area)
-    )
+impl Renderable for ReportScreen {
+    fn render(&self, area: Rect, buf: &mut Buffer)
+    where
+        Self: Sized,
+    {
+        use Constraint::{Length, Min};
+        let vertical = Layout::vertical([Length(MENU_HEIGHT), Min(0), Length(WARNING_HEIGHT)]);
+        let [menu_area, report_area, warnings_area] = vertical.areas(area);
+        self.menu.build().render(menu_area, buf);
+        self.report.build().render(report_area, buf);
+        self.warnings.build().render(warnings_area, buf);
+    }
+}
+
+struct WarningsScreen {
+    menu: ParagraphBuilder,
+    warnings: ParagraphBuilder,
+}
+
+impl WarningsScreen {
+    fn new(menu: &Menu<UserRequest>, file: &LoadedFile) -> Self {
+        WarningsScreen {
+            menu: format_menu(menu),
+            warnings: format_warnings(file),
+        }
+    }
+}
+
+impl Renderable for WarningsScreen {
+    fn render(&self, area: Rect, buf: &mut Buffer)
+    where
+        Self: Sized,
+    {
+        use Constraint::{Length, Min};
+        let vertical = Layout::vertical([Length(MENU_HEIGHT), Min(0)]);
+        let [menu_area, warnings_area] = vertical.areas(area);
+        self.menu.build().render(menu_area, buf);
+        self.warnings.build().render(warnings_area, buf);
+    }
+}
+
+struct ErrorScreen {
+    menu: ParagraphBuilder,
+    error: ParagraphBuilder,
+}
+
+impl ErrorScreen {
+    fn new(menu: &Menu<UserRequest>, filename: &str, error: &anyhow::Error) -> Self {
+        ErrorScreen {
+            menu: format_menu(menu),
+            error: format_error(filename, error),
+        }
+    }
+}
+
+impl Renderable for ErrorScreen {
+    fn render(&self, area: Rect, buf: &mut Buffer)
+    where
+        Self: Sized,
+    {
+        use Constraint::{Length, Min};
+        let vertical = Layout::vertical([Length(MENU_HEIGHT), Min(0), Length(WARNING_HEIGHT)]);
+        let [menu_area, error_area] = vertical.areas(area);
+        self.menu.build().render(menu_area, buf);
+        self.error.build().render(error_area, buf);
+    }
 }
 
 fn get_editor() -> String {
