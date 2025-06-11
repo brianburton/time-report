@@ -301,7 +301,7 @@ impl Iterator for DateIter {
     }
 }
 
-#[derive(Debug, Getters, Clone, Copy)]
+#[derive(Debug, Getters, Clone, Copy, PartialEq)]
 pub struct DateRange {
     first: Date,
     last: Date,
@@ -327,6 +327,12 @@ impl DateRange {
         let first = self.first.this_monday()?;
         let last = self.last.this_sunday()?;
         Ok(DateRange { first, last })
+    }
+}
+
+impl Display for DateRange {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}-{}", self.first, self.last)
     }
 }
 

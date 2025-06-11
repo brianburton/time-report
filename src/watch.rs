@@ -15,31 +15,36 @@ use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use derive_getters::Getters;
 use im::{Vector, vector};
 use menu::{Menu, MenuItem};
-use ratatui::prelude::{Backend, Rect};
+use mockall::automock;
+use ratatui::buffer::Buffer;
+use ratatui::prelude::{Backend, Rect, Widget};
 use regex::Regex;
 use std::env;
 use std::fs;
 use std::process::Command;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 mod menu;
 mod paragraph;
 
 pub fn watch_and_report(filename: &str, dates: &dyn Fn() -> DateRange) -> Result<()> {
-    let mut menu = create_menu()?;
+    let menu = create_menu()?;
     let mut app_display = RealAppScreen {
         terminal: ratatui::init(),
     };
     let mut storage = RealStorage {};
     let mut editor = RealEditor {};
+    let mut clock = RealClock {};
     let mut app_state = WatchApp::new(
         filename,
-        &mut menu,
+        dates,
+        menu,
         &mut app_display,
         &mut storage,
         &mut editor,
+        &mut clock,
     );
-    let result = app_state.run(dates);
+    let result = app_state.run();
     _ = app_display.terminal.clear();
     ratatui::restore();
     result
@@ -55,26 +60,38 @@ enum ScreenEvent {
     Timeout,
 }
 
+trait Renderable {
+    fn render(&self, area: Rect, buf: &mut Buffer);
+}
+
+#[automock]
 trait AppScreen {
     fn read(&self, timeout: Duration) -> Result<ScreenEvent>;
-    fn draw(&mut self, region_factory: &dyn Fn(Rect) -> Vector<Region>) -> Result<()>;
+    fn draw(&mut self, screen: &dyn Renderable) -> Result<()>;
     fn pause(&mut self) -> Result<()>;
     fn resume(&mut self) -> Result<()>;
 }
 
+#[automock]
 trait Storage {
     fn timestamp(&mut self, filename: &str) -> Result<u128>;
-    fn load(&mut self, filename: &str) -> Result<LoadedFile>;
+    fn load(&mut self, dates: DateRange, filename: &str) -> Result<LoadedFile>;
     fn append(
         &mut self,
         filename: &str,
         date: Date,
-        recent_projects: Vector<&Project>,
+        recent_projects: &Vector<Project>,
     ) -> Result<()>;
 }
 
+#[automock]
 trait Editor {
     fn edit_file(&self, filename: &str, line_number: u32) -> Result<()>;
+}
+
+#[automock]
+trait Clock {
+    fn current_millis(&self) -> u128;
 }
 
 struct RealAppScreen<T: Backend> {
@@ -100,15 +117,10 @@ impl<T: Backend> AppScreen for RealAppScreen<T> {
         Ok(ScreenEvent::Timeout)
     }
 
-    fn draw(&mut self, region_factory: &dyn Fn(Rect) -> Vector<Region>) -> Result<()> {
+    fn draw(&mut self, screen: &dyn Renderable) -> Result<()> {
         let error_context = "RealAppScreen.draw";
         self.terminal
-            .draw(|frame| {
-                let regions = region_factory(frame.area());
-                for region in regions.iter() {
-                    frame.render_widget(region.paragraph.build(), region.area);
-                }
-            })
+            .draw(|frame| screen.render(frame.area(), frame.buffer_mut()))
             .with_context(|| format!("{}: failed to draw terminal", error_context))
             .map(|_| ())
     }
@@ -133,6 +145,14 @@ impl<T: Backend> AppScreen for RealAppScreen<T> {
 }
 
 struct RealStorage {}
+impl RealStorage {
+    fn system_time_to_millis(time: SystemTime) -> Result<u128> {
+        time.duration_since(SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .map_err(Into::into)
+    }
+}
+
 impl Storage for RealStorage {
     fn timestamp(&mut self, filename: &str) -> Result<u128> {
         let error_context = "RealStorage.timestamp";
@@ -141,23 +161,30 @@ impl Storage for RealStorage {
         let modified = metadata
             .modified()
             .with_context(|| format!("{}: modified", error_context))?;
-        let millis = modified
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .with_context(|| format!("{}: duration_since", error_context))?
-            .as_millis();
-        Ok(millis)
+        Self::system_time_to_millis(modified)
+            .with_context(|| format!("{}: system_time_to_millis", error_context))
     }
 
-    fn load(&mut self, filename: &str) -> Result<LoadedFile> {
+    fn load(&mut self, dates: DateRange, filename: &str) -> Result<LoadedFile> {
+        let current_file_millis = self.timestamp(filename)?;
         let (day_entries, warnings) = parse::parse_file(filename)?;
-        Ok(LoadedFile::new(&day_entries, &warnings))
+        let min_date = dates.first().minus_days(30)?;
+        let recent_projects = append::recent_projects(&day_entries, min_date, 5);
+        let day_entries = report::day_entries_in_range(&dates, &day_entries);
+        Ok(LoadedFile::new(
+            dates,
+            &day_entries,
+            &warnings,
+            &recent_projects,
+            current_file_millis,
+        ))
     }
 
     fn append(
         &mut self,
         filename: &str,
         date: Date,
-        recent_projects: Vector<&Project>,
+        recent_projects: &Vector<Project>,
     ) -> Result<()> {
         append::append_to_file(filename, date, recent_projects)
     }
@@ -180,43 +207,60 @@ impl Editor for RealEditor {
             .wait()
             .with_context(|| format!("{}: wait", error_context))?;
         if !status.success() {
-            return Err(anyhow!("{}: editor command failed", error_context));
+            return Err(anyhow!(
+                "{}: editor command failed: {}",
+                error_context,
+                status
+            ));
         }
         Ok(())
     }
 }
 
+struct RealClock {}
+impl Clock for RealClock {
+    fn current_millis(&self) -> u128 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("unable to read current time")
+            .as_millis()
+    }
+}
+
 #[derive(Clone, Getters)]
 struct LoadedFile {
+    dates: DateRange,
     day_entries: Vector<DayEntry>,
     warnings: Vector<String>,
+    recent_projects: Vector<Project>,
+    load_time_millis: u128,
 }
 
 impl LoadedFile {
-    fn new(day_entries: &Vector<DayEntry>, warnings: &Vector<String>) -> Self {
+    fn new(
+        dates: DateRange,
+        day_entries: &Vector<DayEntry>,
+        warnings: &Vector<String>,
+        recent_projects: &Vector<Project>,
+        load_time_millis: u128,
+    ) -> Self {
         LoadedFile {
+            dates,
             day_entries: day_entries.clone(),
             warnings: warnings.clone(),
+            recent_projects: recent_projects.clone(),
+            load_time_millis,
         }
     }
 
-    fn empty() -> Self {
+    fn empty(dates: DateRange) -> Self {
         LoadedFile {
+            dates,
             day_entries: Vector::new(),
             warnings: Vector::new(),
+            recent_projects: Vector::new(),
+            load_time_millis: 0,
         }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct Region {
-    paragraph: ParagraphBuilder,
-    area: Rect,
-}
-
-impl Region {
-    fn new(paragraph: ParagraphBuilder, area: Rect) -> Self {
-        Region { paragraph, area }
     }
 }
 
@@ -248,44 +292,57 @@ enum UICommand {
     DisplayError(anyhow::Error),
 }
 
-struct WatchApp<'a> {
-    filename: &'a str,
-    last_update_millis: u128,
+struct WatchApp<'a, TAppScreen, TStorage, TEditor, TClock>
+where
+    TAppScreen: AppScreen,
+    TStorage: Storage,
+    TEditor: Editor,
+    TClock: Clock,
+{
     loaded: LoadedFile,
+    menu: Menu<UserRequest>,
+    filename: &'a str,
     read_timeout: Duration,
     update_delay_millis: u128,
-    menu: &'a mut Menu<UserRequest>,
-    app_screen: &'a mut dyn AppScreen,
-    storage: &'a mut dyn Storage,
-    editor: &'a mut dyn Editor,
+    dates: &'a dyn Fn() -> DateRange,
+    app_screen: &'a mut TAppScreen,
+    storage: &'a mut TStorage,
+    editor: &'a mut TEditor,
+    clock: &'a mut TClock,
 }
 
-impl<'a> WatchApp<'a> {
+impl<'a, TAppScreen, TStorage, TEditor, TClock> WatchApp<'a, TAppScreen, TStorage, TEditor, TClock>
+where
+    TAppScreen: AppScreen,
+    TStorage: Storage,
+    TEditor: Editor,
+    TClock: Clock,
+{
     fn new(
         filename: &'a str,
-        menu: &'a mut Menu<UserRequest>,
-        app_screen: &'a mut dyn AppScreen,
-        storage: &'a mut dyn Storage,
-        editor: &'a mut dyn Editor,
-    ) -> WatchApp<'a> {
+        dates: &'a dyn Fn() -> DateRange,
+        menu: Menu<UserRequest>,
+        app_screen: &'a mut TAppScreen,
+        storage: &'a mut TStorage,
+        editor: &'a mut TEditor,
+        clock: &'a mut TClock,
+    ) -> WatchApp<'a, TAppScreen, TStorage, TEditor, TClock> {
         WatchApp {
             filename,
-            loaded: LoadedFile::empty(),
-            last_update_millis: 0,
+            dates,
+            loaded: LoadedFile::empty(dates()),
             update_delay_millis: 500,
             read_timeout: Duration::from_millis(100),
             menu,
             app_screen,
             storage,
             editor,
+            clock,
         }
     }
 
-    fn run(&mut self, dates: &dyn Fn() -> DateRange) -> Result<()> {
-        let mut on_screen = DisplayContent::Report(LoadedFile {
-            day_entries: vector!(),
-            warnings: vector!(),
-        });
+    fn run(&mut self) -> Result<()> {
+        let mut on_screen = DisplayContent::Report(self.loaded.clone());
         loop {
             let user_request = self.read_user_request()?;
             let ui_command = self.process_user_request(user_request)?;
@@ -297,25 +354,29 @@ impl<'a> WatchApp<'a> {
                 UICommand::DisplayWarnings(loaded) => on_screen = DisplayContent::Warnings(loaded),
                 UICommand::DisplayError(error) => on_screen = DisplayContent::Error(error),
             };
-            self.update_screen(&on_screen, dates)?;
+            self.update_screen(&on_screen)?;
         }
     }
 
-    fn update_screen(
-        &mut self,
-        what_to_display: &DisplayContent,
-        dates: &dyn Fn() -> DateRange,
-    ) -> Result<()> {
+    fn update_screen(&mut self, what_to_display: &DisplayContent) -> Result<()> {
         match what_to_display {
-            DisplayContent::Report(loaded_file) => self.app_screen.draw(&|screen_area| {
-                create_report_screen(screen_area, self.menu, self.filename, loaded_file, dates())
-            }),
+            DisplayContent::Report(loaded_file) => {
+                let report = ReportScreen::new(&self.menu, loaded_file);
+                match report {
+                    Ok(report) => self.app_screen.draw(&report),
+                    Err(error) => {
+                        self.app_screen
+                            .draw(&ErrorScreen::new(&self.menu, self.filename, &error))
+                    }
+                }
+            }
             DisplayContent::Warnings(loaded_file) => self
                 .app_screen
-                .draw(&|screen_area| create_warnings_screen(screen_area, self.menu, loaded_file)),
-            DisplayContent::Error(error) => self.app_screen.draw(&|screen_area| {
-                create_error_screen(screen_area, self.menu, self.filename, error)
-            }),
+                .draw(&WarningsScreen::new(&self.menu, loaded_file)),
+            DisplayContent::Error(error) => {
+                self.app_screen
+                    .draw(&ErrorScreen::new(&self.menu, self.filename, error))
+            }
         }
     }
 
@@ -336,8 +397,8 @@ impl<'a> WatchApp<'a> {
 
     fn change_menu_selection(&mut self, user_request: UserRequest) -> Result<UICommand> {
         match user_request {
-            UserRequest::Left => self.menu.left(),
-            UserRequest::Right => self.menu.right(),
+            UserRequest::Left => self.menu = self.menu.left(),
+            UserRequest::Right => self.menu = self.menu.right(),
             x => {
                 return Err(anyhow!(
                     "WatchApp.change_menu_selection: invalid command({:?})",
@@ -352,7 +413,10 @@ impl<'a> WatchApp<'a> {
         loop {
             match self.app_screen.read(self.read_timeout)? {
                 ScreenEvent::Char(c) => match self.menu.select(c) {
-                    Some(x) => return Ok(x),
+                    Some(x) => {
+                        self.menu = x;
+                        return Ok(self.menu.value());
+                    }
                     None => continue,
                 },
                 ScreenEvent::Enter => return Ok(self.menu.value()),
@@ -365,17 +429,38 @@ impl<'a> WatchApp<'a> {
     }
 
     fn load(&mut self, force_reload: bool) -> Result<UICommand> {
-        let current_file_millis = self.storage.timestamp(self.filename)?;
-        if current_file_millis == self.last_update_millis && !force_reload {
+        let dates = self.date_range();
+        if !self.load_needed(dates, force_reload)? {
             return Ok(UICommand::DoNothing);
         }
-        let next_update_millis = self.last_update_millis + self.update_delay_millis;
-        if current_file_millis < next_update_millis && !force_reload {
-            return Ok(UICommand::DoNothing);
+
+        self.loaded = self.storage.load(dates, self.filename)?;
+        if self.loaded.day_entries.is_empty() {
+            self.loaded
+                .warnings
+                .push_front(format!("No day entries found in date range: {}.", dates));
         }
-        self.last_update_millis = current_file_millis;
-        self.loaded = self.storage.load(self.filename)?;
+
         Ok(UICommand::Report(self.loaded.clone()))
+    }
+
+    fn load_needed(&mut self, dates: DateRange, force_reload: bool) -> Result<bool> {
+        if force_reload || self.loaded.dates != dates {
+            return Ok(true);
+        }
+
+        let current_file_millis = self.storage.timestamp(self.filename)?;
+        if current_file_millis == self.loaded.load_time_millis {
+            return Ok(false);
+        }
+
+        let current_time_millis = self.clock.current_millis();
+        let next_update_millis = current_time_millis - self.update_delay_millis;
+        Ok(current_file_millis < next_update_millis)
+    }
+
+    fn date_range(&self) -> DateRange {
+        (self.dates)()
     }
 
     fn append(&mut self) -> Result<UICommand> {
@@ -384,9 +469,8 @@ impl<'a> WatchApp<'a> {
         let day_entries = self.loaded.day_entries();
         append::validate_date(day_entries, date)?;
 
-        let min_date = date.minus_days(30)?;
-        let recent_projects = append::recent_projects(day_entries, min_date, 5);
-        self.storage.append(self.filename, date, recent_projects)?;
+        self.storage
+            .append(self.filename, date, &self.loaded.recent_projects)?;
         self.load(true)
     }
 
@@ -415,7 +499,7 @@ fn create_menu() -> Result<Menu<UserRequest>> {
         MenuItem::new(
             UserRequest::Edit,
             "Edit",
-            format!("Edit the file using {} and reload.", get_editor()).as_str(),
+            format!("Edit the file using {} and reload.", get_editor_name()).as_str(),
             'e'
         ),
         MenuItem::new(
@@ -505,9 +589,9 @@ fn format_warnings(file: &LoadedFile) -> ParagraphBuilder {
     builder
 }
 
-fn format_report(file: &LoadedFile, dates: DateRange) -> Result<ParagraphBuilder> {
+fn format_report(file: &LoadedFile) -> Result<ParagraphBuilder> {
     let mut builder = ParagraphBuilder::new();
-    for line in report::create_report(dates, &file.day_entries)? {
+    for line in report::create_report(file.dates, &file.day_entries)? {
         builder.add_plain(line).new_line();
     }
     builder.titled("Report".to_string());
@@ -521,11 +605,12 @@ fn format_error(filename: &str, error: &anyhow::Error) -> ParagraphBuilder {
         .map(|s| s.to_string())
         .collect::<Vec<_>>();
     let mut builder = ParagraphBuilder::new();
-    builder.add_styled(format!("   filename: {}", filename), style);
     builder
+        .add_styled(format!("   filename: {}", filename), style)
+        .new_line()
         .add_styled(
             format!(
-                "    message: {:?}",
+                "    message: {}",
                 lines.first().map(|s| s.as_ref()).unwrap_or("")
             ),
             style,
@@ -539,62 +624,163 @@ fn format_error(filename: &str, error: &anyhow::Error) -> ParagraphBuilder {
     builder
 }
 
-fn create_warnings_screen(
-    screen_area: Rect,
-    menu: &Menu<UserRequest>,
-    file: &LoadedFile,
-) -> Vector<Region> {
-    use Constraint::{Length, Min};
-    let vertical = Layout::vertical([Length(MENU_HEIGHT), Min(0)]);
-    let [menu_area, warnings_area] = vertical.areas(screen_area);
-    vector!(
-        Region::new(format_menu(menu), menu_area),
-        Region::new(format_warnings(file), warnings_area)
-    )
+struct ReportScreen {
+    menu: ParagraphBuilder,
+    report: ParagraphBuilder,
+    warnings: ParagraphBuilder,
 }
 
-fn create_error_screen(
-    screen_area: Rect,
-    menu: &Menu<UserRequest>,
-    filename: &str,
-    error: &anyhow::Error,
-) -> Vector<Region> {
-    use Constraint::{Length, Min};
-    let vertical = Layout::vertical([Length(MENU_HEIGHT), Min(0)]);
-    let [menu_area, error_area] = vertical.areas(screen_area);
-    vector!(
-        Region::new(format_menu(menu), menu_area),
-        Region::new(format_error(filename, error), error_area)
-    )
+impl ReportScreen {
+    fn new(menu: &Menu<UserRequest>, file: &LoadedFile) -> Result<Self> {
+        let screen = ReportScreen {
+            menu: format_menu(menu),
+            report: format_report(file)?,
+            warnings: format_warnings_summary(file),
+        };
+        Ok(screen)
+    }
 }
 
-fn create_report_screen(
-    screen_area: Rect,
-    menu: &Menu<UserRequest>,
-    filename: &str,
-    file: &LoadedFile,
-    dates: DateRange,
-) -> Vector<Region> {
-    let report = match format_report(file, dates) {
-        Ok(r) => r,
-        Err(e) => return create_error_screen(screen_area, menu, filename, &e),
-    };
-    use Constraint::{Length, Min};
-    let vertical = Layout::vertical([Length(MENU_HEIGHT), Min(0), Length(WARNING_HEIGHT)]);
-    let [menu_area, report_area, warnings_area] = vertical.areas(screen_area);
-    vector!(
-        Region::new(format_menu(menu), menu_area),
-        Region::new(report, report_area),
-        Region::new(format_warnings_summary(file), warnings_area)
-    )
+impl Renderable for ReportScreen {
+    fn render(&self, area: Rect, buf: &mut Buffer)
+    where
+        Self: Sized,
+    {
+        use Constraint::{Length, Min};
+        let vertical = Layout::vertical([Length(MENU_HEIGHT), Min(0), Length(WARNING_HEIGHT)]);
+        let [menu_area, report_area, warnings_area] = vertical.areas(area);
+        self.menu.build().render(menu_area, buf);
+        self.report.build().render(report_area, buf);
+        self.warnings.build().render(warnings_area, buf);
+    }
+}
+
+struct WarningsScreen {
+    menu: ParagraphBuilder,
+    warnings: ParagraphBuilder,
+}
+
+impl WarningsScreen {
+    fn new(menu: &Menu<UserRequest>, file: &LoadedFile) -> Self {
+        WarningsScreen {
+            menu: format_menu(menu),
+            warnings: format_warnings(file),
+        }
+    }
+}
+
+impl Renderable for WarningsScreen {
+    fn render(&self, area: Rect, buf: &mut Buffer)
+    where
+        Self: Sized,
+    {
+        use Constraint::{Length, Min};
+        let vertical = Layout::vertical([Length(MENU_HEIGHT), Min(0)]);
+        let [menu_area, warnings_area] = vertical.areas(area);
+        self.menu.build().render(menu_area, buf);
+        self.warnings.build().render(warnings_area, buf);
+    }
+}
+
+struct ErrorScreen {
+    menu: ParagraphBuilder,
+    error: ParagraphBuilder,
+}
+
+impl ErrorScreen {
+    fn new(menu: &Menu<UserRequest>, filename: &str, error: &anyhow::Error) -> Self {
+        ErrorScreen {
+            menu: format_menu(menu),
+            error: format_error(filename, error),
+        }
+    }
+}
+
+impl Renderable for ErrorScreen {
+    fn render(&self, area: Rect, buf: &mut Buffer)
+    where
+        Self: Sized,
+    {
+        use Constraint::{Length, Min};
+        let vertical = Layout::vertical([Length(MENU_HEIGHT), Min(0)]);
+        let [menu_area, error_area] = vertical.areas(area);
+        self.menu.build().render(menu_area, buf);
+        self.error.build().render(error_area, buf);
+    }
 }
 
 fn get_editor() -> String {
     env::var("EDITOR").unwrap_or_else(|_| "vi".to_string())
 }
 
+fn get_editor_name() -> String {
+    let editor_command = get_editor();
+    let regex: Regex = Regex::new(r"^([^ ]*/)?([^ /]+)").unwrap();
+    let editor = regex.captures_iter(editor_command.as_str()).last();
+    editor.map(|c| c[2].to_string()).unwrap_or(editor_command)
+}
+
 fn supports_line_num_arg(editor: &str) -> bool {
     Regex::new(r"^(.*/)?((vim?)|(hx))$")
         .unwrap()
         .is_match(editor)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{DateTime, Utc};
+    use filetime::{FileTime, set_file_times};
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_mock_clock() {
+        let mut c = MockClock::new();
+        c.expect_current_millis().return_const(1000u128);
+        assert_eq!(c.current_millis(), 1000u128);
+    }
+
+    #[test]
+    fn test_get_editor_name() {
+        let key = "EDITOR";
+        unsafe {
+            env::set_var(key, "vi");
+            assert_eq!(get_editor_name(), "vi".to_string());
+
+            env::set_var(key, "/usr/bin/vi");
+            assert_eq!(get_editor_name(), "vi".to_string());
+
+            env::set_var(key, "/usr/bin/emacsclient -n");
+            assert_eq!(get_editor_name(), "emacsclient".to_string());
+        }
+    }
+
+    #[test]
+    fn test_millis() {
+        let datetime_str = "2024-06-09T12:34:56Z";
+        let dt: DateTime<Utc> = datetime_str.parse().unwrap(); // ISO 8601 format
+        let system_time: SystemTime = SystemTime::from(dt);
+        let millis = RealStorage::system_time_to_millis(system_time).unwrap();
+        assert_eq!(millis, 1717936496000);
+    }
+
+    #[test]
+    fn test_timestamp() {
+        let datetime_str = "2024-06-09T12:34:55Z";
+        let dt: DateTime<Utc> = datetime_str.parse().unwrap(); // ISO 8601 format
+        let system_time: SystemTime = SystemTime::from(dt);
+
+        let temp_file = NamedTempFile::new().unwrap();
+        let path = temp_file.path();
+
+        // Set the access and modification times
+        let new_atime = FileTime::from_system_time(system_time);
+        set_file_times(path, new_atime, new_atime).unwrap();
+
+        let mut storage = RealStorage {};
+        assert_eq!(
+            storage.timestamp(path.to_str().unwrap()).unwrap(),
+            1717936495000
+        );
+    }
 }

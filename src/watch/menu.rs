@@ -3,7 +3,7 @@ use anyhow::anyhow;
 use derive_getters::Getters;
 use im::Vector;
 
-#[derive(Clone, Getters)]
+#[derive(Clone, Debug, Getters)]
 pub struct MenuItem<T: Clone + Copy> {
     description: String,
     display: String,
@@ -23,7 +23,7 @@ impl<T: Clone + Copy> MenuItem<T> {
     }
 }
 
-#[derive(Getters)]
+#[derive(Debug, Getters)]
 pub struct Menu<T: Clone + Copy> {
     items: Vector<MenuItem<T>>,
     selected_index: usize,
@@ -41,29 +41,36 @@ impl<T: Clone + Copy> Menu<T> {
         }
     }
 
-    pub fn select(&mut self, c: char) -> Option<T> {
+    fn new_selection(&self, selected_index: usize) -> Self {
+        Menu {
+            items: self.items.clone(),
+            selected_index,
+        }
+    }
+
+    pub fn select(&self, c: char) -> Option<Self> {
         for (index, item) in self.items.iter().enumerate() {
             if item.key == c {
-                self.selected_index = index;
-                return Some(item.value);
+                return Some(self.new_selection(index));
             }
         }
         None
     }
 
-    pub fn left(&mut self) {
-        if self.selected_index == 0 {
-            self.selected_index = self.items.len() - 1;
-        } else {
-            self.selected_index -= 1;
-        }
+    pub fn left(&self) -> Self {
+        let new_index = match self.selected_index {
+            0 => self.items.len() - 1,
+            _ => self.selected_index - 1,
+        };
+        self.new_selection(new_index)
     }
 
-    pub fn right(&mut self) {
-        self.selected_index += 1;
-        if self.selected_index >= self.items.len() {
-            self.selected_index = 0
+    pub fn right(&self) -> Self {
+        let mut new_index = self.selected_index + 1;
+        if new_index >= self.items.len() {
+            new_index = 0
         }
+        self.new_selection(new_index)
     }
 
     pub fn description(&self) -> &str {
@@ -80,7 +87,7 @@ mod tests {
     use super::*;
     use im::vector;
 
-    #[derive(Copy, Clone)]
+    #[derive(Copy, Clone, Debug, PartialEq)]
     enum MenuValue {
         Append,
         Reload,
@@ -115,11 +122,21 @@ mod tests {
         let mut menu = Menu::new(menu_items.clone()).unwrap();
         for i in 0..menu_items.len() {
             assert_eq!(menu.selected_index, i);
-            menu.right();
+            assert_eq!(menu_items[i].description(), menu.description());
+            assert_eq!(menu_items[i].value, menu.value());
+            menu = menu.right();
         }
         for i in (0..menu_items.len()).rev() {
-            menu.left();
+            menu = menu.left();
             assert_eq!(menu.selected_index, i);
         }
+
+        menu = menu.new_selection(0).left();
+        assert_eq!(menu.selected_index, menu.items.len() - 1);
+        menu = menu.right();
+        assert_eq!(menu.selected_index, 0);
+
+        assert_eq!(None, menu.select('x').map(|x| x.value()));
+        assert_eq!(Some(MenuValue::Reload), menu.select('r').map(|x| x.value()));
     }
 }
