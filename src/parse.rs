@@ -1,15 +1,33 @@
 use crate::model::{Date, DayEntry, Project, ProjectTimes, Time, TimeRange};
-use anyhow::Result;
-use anyhow::{Context, anyhow};
+use anyhow::{Result, bail};
 use im::Vector;
 use lazy_static::lazy_static;
 use regex::Regex;
 use std::fs::File;
 use std::io::{self, BufRead};
 use std::path::Path;
+use thiserror::Error;
 
 #[cfg(test)]
 mod tests;
+
+#[derive(Error, Debug)]
+enum ParseError {
+    #[error("Invalid time range: {0}")]
+    InvalidTimeRange(String),
+    #[error("Invalid time ranges: {0}")]
+    InvalidTimeRanges(String),
+    #[error("Invalid time line: {0}")]
+    InvalidTimeLine(String),
+    #[error("Invalid date line: {0}")]
+    InvalidDateLine(String),
+    #[error("Time line appears before first date: line {0}: {1}")]
+    TimeLineWithNoDate(u32, String),
+    #[error("Unable to open file {0}: {1}")]
+    OpenFileFailure(String, #[source] io::Error),
+    #[error("Unable to read line from file: {0}")]
+    ReadFileFailure(#[from] io::Error),
+}
 
 lazy_static! {
     static ref COMMENT_RE: Regex = Regex::new(r"^(.*)\s*--.*$").unwrap();
@@ -47,7 +65,7 @@ fn parse_time(hhmm: &str) -> Result<Time> {
 fn parse_time_range(text: &str) -> Result<TimeRange> {
     let caps = TIME_RANGE_RE
         .captures(text)
-        .ok_or_else(|| anyhow!("parse_time_range: not a time range"))?;
+        .ok_or_else(|| ParseError::InvalidTimeRange(text.to_string()))?;
     let from = parse_time(caps[1].to_string().as_str())?;
     let to = parse_time(caps[2].to_string().as_str())?;
     TimeRange::new(from, to)
@@ -56,10 +74,7 @@ fn parse_time_range(text: &str) -> Result<TimeRange> {
 // Function to parse the time ranges from a string (e.g., "0800-1200,1300-1310,1318-1708")
 fn parse_time_ranges(time_range_str: &str) -> Result<(Vector<TimeRange>, bool)> {
     if !TIME_RANGES_RE.is_match(time_range_str) {
-        return Err(anyhow!(
-            "parse_time_ranges: invalid time ranges: {}",
-            time_range_str
-        ));
+        bail!(ParseError::InvalidTimeRanges(time_range_str.to_string()));
     };
 
     let mut time_ranges = Vector::new();
@@ -89,7 +104,7 @@ fn is_empty_time_line(line: &str) -> bool {
 fn parse_date_line(line: &str) -> Result<Date> {
     let caps = DATE_LINE_RE
         .captures(line)
-        .ok_or_else(|| anyhow!("parse_date_line: not a date line"))?;
+        .ok_or_else(|| ParseError::InvalidDateLine(line.to_string()))?;
     Date::parse(caps[1].to_string().as_str())
 }
 
@@ -97,7 +112,7 @@ fn parse_date_line(line: &str) -> Result<Date> {
 fn parse_time_line(line: &str) -> Result<(ProjectTimes, bool)> {
     let caps = TIME_LINE_RE
         .captures(line)
-        .ok_or_else(|| anyhow!("parse_time_line: not a time line"))?;
+        .ok_or_else(|| ParseError::InvalidTimeLine(line.to_string()))?;
     let client = caps[1].to_string();
     let project = caps[2].to_string();
     let (time_ranges, incomplete) = parse_time_ranges(&caps[3])?;
@@ -113,7 +128,8 @@ fn parse_time_line(line: &str) -> Result<(ProjectTimes, bool)> {
 // Function to parse a file into day entries
 pub fn parse_file(file_path: &str) -> Result<(Vector<DayEntry>, Vector<String>)> {
     let path = Path::new(file_path);
-    let file = File::open(path).with_context(|| "parse_file: open")?;
+    let file =
+        File::open(path).map_err(|e| ParseError::OpenFileFailure(file_path.to_string(), e))?;
     let reader = io::BufReader::new(file);
 
     let mut days = Vector::new();
@@ -128,7 +144,7 @@ pub fn parse_file(file_path: &str) -> Result<(Vector<DayEntry>, Vector<String>)>
         line_num += 1;
         let line = raw_line
             .map(|s| remove_comments(&s))
-            .with_context(|| "parse_file: read")?;
+            .map_err(ParseError::ReadFileFailure)?;
 
         if is_date_line(line.as_str()) {
             date_line_num = line_num;
@@ -162,10 +178,7 @@ pub fn parse_file(file_path: &str) -> Result<(Vector<DayEntry>, Vector<String>)>
                 }
                 projects.push_back(time_ranges);
             } else {
-                return Err(anyhow!(
-                    "parse_file: time line before any dates:{line_num}: '{}'",
-                    line
-                ));
+                bail!(ParseError::TimeLineWithNoDate(line_num, line));
             }
         } else if line == "END" {
             break;
