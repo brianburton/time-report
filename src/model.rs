@@ -39,11 +39,13 @@ lazy_static! {
 pub const MIN_YEAR: u16 = 1973;
 pub const MAX_YEAR: u16 = 2300;
 
+/// Current time of day at minute resolution.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Copy, Clone)]
 pub struct Time {
     minute: u16,
 }
 
+/// Displays the time as HHMM (note no colon between them).
 impl Display for Time {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:02}{:02}", self.hour(), self.minute())
