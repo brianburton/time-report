@@ -330,6 +330,14 @@ impl DateRange {
     }
 }
 
+impl IntoIterator for DateRange {
+    type Item = Date;
+    type IntoIter = DateIter;
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Getters)]
 pub struct TimeRange {
     from: Time,
