@@ -88,7 +88,7 @@ pub fn random_day_entries(rnd: &mut Random, dates: DateRange) -> Vector<DayEntry
     update_random_projects(rnd, &mut projects, project_count);
 
     let mut day_entries: Vector<DayEntry> = Vector::new();
-    for d in dates.iter() {
+    for d in dates {
         if d.is_monday() {
             update_random_projects(rnd, &mut projects, project_count);
         }
