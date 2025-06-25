@@ -147,7 +147,6 @@ pub fn parse_file(file_path: &str) -> Result<(Vector<DayEntry>, Vector<String>)>
             .map_err(ParseError::ReadFileFailure)?;
 
         if is_date_line(line.as_str()) {
-            date_line_num = line_num;
             let new_date = parse_date_line(&line)?;
             if have_date {
                 if new_date <= date {
@@ -160,6 +159,7 @@ pub fn parse_file(file_path: &str) -> Result<(Vector<DayEntry>, Vector<String>)>
                 have_date = true;
             }
             date = new_date;
+            date_line_num = line_num;
             projects.clear();
         } else if is_empty_time_line(line.as_str()) {
             warnings.push_back(format!(
