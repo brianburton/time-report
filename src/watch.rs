@@ -391,11 +391,9 @@ impl<'a> WatchApp<'a> {
     }
 
     fn edit(&mut self) -> Result<UICommand> {
-        let line_number = self
-            .loaded
-            .day_entries()
-            .last()
-            .map(|e| e.line_number())
+        let line_number = *self
+            .find_today_or_later(Date::today())
+            .map(|date| date.line_number())
             .unwrap_or(&0);
 
         self.app_screen
@@ -403,10 +401,19 @@ impl<'a> WatchApp<'a> {
             .with_context(|| "failed to pause to run editor")?;
         let rc = self
             .editor
-            .edit_file(self.filename, *line_number)
+            .edit_file(self.filename, line_number)
             .and_then(|_| self.load(true));
         _ = self.app_screen.resume();
         rc
+    }
+
+    fn find_today_or_later(&self, today: Date) -> Option<&DayEntry> {
+        self.loaded
+            .day_entries()
+            .iter()
+            .filter(|e| e.date() >= &today)
+            .next()
+            .or_else(|| self.loaded.day_entries().last())
     }
 }
 
