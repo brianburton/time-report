@@ -1,5 +1,6 @@
 use crate::core::{create_temp_file, delete_file};
 use crate::model::{Date, DayEntry, Project};
+use crate::parse::try_parse_date_line;
 use anyhow::{Context, Result, anyhow};
 use im::{HashMap, Vector};
 use scopeguard::defer;
@@ -29,11 +30,7 @@ pub fn validate_date(all_day_entries: &Vector<DayEntry>, date: Date) -> Result<(
                 ));
             }
             Ordering::Greater => {
-                return Err(anyhow!(
-                    "append_to_file: newer date in file: date='{}' newer='{}'",
-                    date,
-                    day.date()
-                ));
+                return Ok(());
             }
         }
     }
@@ -72,7 +69,10 @@ pub fn append_to_file(filename: &str, date: Date, projects: Vector<&Project>) ->
     for raw_line in reader.lines() {
         let line = raw_line.with_context(|| format!("{}: read failed", error_context))?;
         let trimmed = line.trim();
-        if trimmed == "END" && !appended {
+        let is_later_date = try_parse_date_line(trimmed)
+            .map(|d| d >= date)
+            .unwrap_or(false);
+        if (is_later_date || trimmed == "END") && !appended {
             writer
                 .write_all(create_date_str(prev_blank, date, &projects).as_bytes())
                 .with_context(|| format!("{}: write failed", error_context))?;

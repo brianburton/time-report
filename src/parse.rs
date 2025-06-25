@@ -108,6 +108,10 @@ fn parse_date_line(line: &str) -> Result<Date> {
     Date::parse(caps[1].to_string().as_str())
 }
 
+pub fn try_parse_date_line(line: &str) -> Option<Date> {
+    parse_date_line(line).ok()
+}
+
 // Function to parse label and time ranges (e.g., "client,project: 0800-1200,1300-1310")
 fn parse_time_line(line: &str) -> Result<(ProjectTimes, bool)> {
     let caps = TIME_LINE_RE
