@@ -21,7 +21,7 @@ fn command_append(args: &mut Args) -> Result<()> {
 
     let min_date = date.minus_days(30)?;
     let recent_projects = append::recent_projects(&all_day_entries, min_date, 5);
-    append::append_to_file(filename.as_str(), date, recent_projects)
+    append::append_to_file(filename.as_str(), date, &recent_projects)
 }
 
 fn command_random(args: &mut Args) -> Result<()> {
@@ -52,7 +52,8 @@ fn command_report(args: &mut Args) -> Result<()> {
     let dates = load_dates(args)?();
     println!("Reporting from {} to {}", dates.first(), dates.last());
 
-    let lines = report::create_report(dates, &all_day_entries)?;
+    let day_entries = report::day_entries_in_range(&dates, &all_day_entries);
+    let lines = report::create_report(dates, &day_entries)?;
     for line in lines {
         println!("{}", line);
     }

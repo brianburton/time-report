@@ -31,9 +31,12 @@ pub fn recent_projects(
     all_day_entries: &Vector<DayEntry>,
     min_date: Date,
     max_to_return: usize,
-) -> Vector<&Project> {
+) -> Vector<Project> {
     let all_projects_map = recent_projects_with_date(all_day_entries, min_date);
     projects_sorted_by_date(all_projects_map, max_to_return)
+        .into_iter()
+        .cloned()
+        .collect()
 }
 
 pub fn validate_date(all_day_entries: &Vector<DayEntry>, date: Date) -> Result<()> {
@@ -51,7 +54,7 @@ pub fn validate_date(all_day_entries: &Vector<DayEntry>, date: Date) -> Result<(
     Ok(())
 }
 
-fn create_date_str(prev_blank: bool, date: Date, projects: &Vector<&Project>) -> String {
+fn create_date_str(prev_blank: bool, date: Date, projects: &Vector<Project>) -> String {
     let mut s = String::new();
     if !prev_blank {
         s.push('\n');
@@ -63,7 +66,7 @@ fn create_date_str(prev_blank: bool, date: Date, projects: &Vector<&Project>) ->
     s
 }
 
-pub fn append_to_file(filename: &str, date: Date, projects: Vector<&Project>) -> Result<()> {
+pub fn append_to_file(filename: &str, date: Date, projects: &Vector<Project>) -> Result<()> {
     let temp_file = create_temp_file(filename)?;
     defer! { delete_file(&temp_file).unwrap_or(())}
 
@@ -87,7 +90,7 @@ pub fn append_to_file(filename: &str, date: Date, projects: Vector<&Project>) ->
             .unwrap_or(false);
         if (is_later_date || trimmed == "END") && !appended {
             writer
-                .write_all(create_date_str(prev_blank, date, &projects).as_bytes())
+                .write_all(create_date_str(prev_blank, date, projects).as_bytes())
                 .map_err(|e| ParseError::WriteFailed(temp_file.to_string(), e))?;
             writer
                 .write_all("\n".as_bytes())
@@ -104,7 +107,7 @@ pub fn append_to_file(filename: &str, date: Date, projects: Vector<&Project>) ->
     }
     if !appended {
         writer
-            .write_all(create_date_str(prev_blank, date, &projects).as_bytes())
+            .write_all(create_date_str(prev_blank, date, projects).as_bytes())
             .map_err(|e| ParseError::WriteFailed(temp_file.to_string(), e))?;
     }
     fs::rename(&temp_file, filename)
