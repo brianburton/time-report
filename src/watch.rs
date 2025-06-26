@@ -411,8 +411,7 @@ impl<'a> WatchApp<'a> {
         self.loaded
             .day_entries()
             .iter()
-            .filter(|e| e.date() >= &today)
-            .next()
+            .find(|e| e.date() >= &today)
             .or_else(|| self.loaded.day_entries().last())
     }
 }
