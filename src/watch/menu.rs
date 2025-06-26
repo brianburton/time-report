@@ -23,7 +23,7 @@ impl<T: Clone + Copy> MenuItem<T> {
     }
 }
 
-#[derive(Debug, Getters)]
+#[derive(Clone, Debug, Getters)]
 pub struct Menu<T: Clone + Copy> {
     items: Vector<MenuItem<T>>,
     selected_index: usize,

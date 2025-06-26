@@ -6,9 +6,10 @@ use ratatui::{
 
 use crate::model::{Date, DateRange, DayEntry, Project};
 use crate::report;
+use crate::watch::WatchError::EditorExitCode;
 use crate::watch::paragraph::ParagraphBuilder;
 use crate::{append, parse};
-use anyhow::{Context, Result, anyhow};
+use anyhow::Result;
 use crossterm::event::KeyCode;
 use crossterm::event::{Event, poll, read};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
@@ -22,10 +23,31 @@ use regex::Regex;
 use std::env;
 use std::fs;
 use std::process::Command;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, SystemTimeError, UNIX_EPOCH};
+use thiserror::Error;
 
 mod menu;
 mod paragraph;
+
+#[derive(Error, Debug)]
+enum WatchError {
+    #[error("Terminal read error: {0}")]
+    TerminalRead(std::io::Error),
+    #[error("Terminal write error: {0}")]
+    TerminalWrite(std::io::Error),
+    #[error("Failed to pause: {0}")]
+    PauseFailed(std::io::Error),
+    #[error("Failed to resume: {0}")]
+    ResumeFailed(std::io::Error),
+    #[error("Failed to read file timestamp: {0}")]
+    TimestampReadFailed(std::io::Error),
+    #[error("Failed to compute timestamp: {0}")]
+    TimestampComputeFailed(SystemTimeError),
+    #[error("Failed to run editor: {0}")]
+    EditorFailure(std::io::Error),
+    #[error("Failed to run editor: {0:?}")]
+    EditorExitCode(Option<i32>),
+}
 
 pub fn watch_and_report(filename: &str, dates: &dyn Fn() -> DateRange) -> Result<()> {
     let menu = create_menu()?;
@@ -100,9 +122,8 @@ struct RealAppScreen<T: Backend> {
 
 impl<T: Backend> AppScreen for RealAppScreen<T> {
     fn read(&self, timeout: Duration) -> Result<ScreenEvent> {
-        let error_context = "RealAppScreen.read";
-        while poll(timeout).with_context(|| format!("{}: poll", error_context))? {
-            match read().with_context(|| format!("{}: read", error_context))? {
+        while poll(timeout).map_err(WatchError::TerminalRead)? {
+            match read().map_err(WatchError::TerminalRead)? {
                 Event::Key(event) => match event.code {
                     KeyCode::Char(c) => return Ok(ScreenEvent::Char(c)),
                     KeyCode::Enter => return Ok(ScreenEvent::Enter),
@@ -118,51 +139,43 @@ impl<T: Backend> AppScreen for RealAppScreen<T> {
     }
 
     fn draw(&mut self, screen: &dyn Renderable) -> Result<()> {
-        let error_context = "RealAppScreen.draw";
         self.terminal
             .draw(|frame| screen.render(frame.area(), frame.buffer_mut()))
-            .with_context(|| format!("{}: failed to draw terminal", error_context))
+            .map_err(WatchError::TerminalWrite)
+            .map_err(anyhow::Error::from)
             .map(|_| ())
     }
 
     fn pause(&mut self) -> Result<()> {
-        let error_context = "RealAppScreen.pause";
-        disable_raw_mode()
-            .with_context(|| format!("{}: failed to disable raw mode", error_context))?;
+        disable_raw_mode().map_err(WatchError::PauseFailed)?;
         self.terminal
             .clear()
-            .with_context(|| format!("{}: failed to clear terminal", error_context))
+            .map_err(WatchError::PauseFailed)
+            .map_err(anyhow::Error::from)
     }
 
     fn resume(&mut self) -> Result<()> {
-        let error_context = "RealAppScreen.resume";
-        enable_raw_mode()
-            .with_context(|| format!("{}: failed to enable raw mode", error_context))?;
+        enable_raw_mode().map_err(WatchError::ResumeFailed)?;
         self.terminal
             .clear()
-            .with_context(|| format!("{}: failed to clear terminal", error_context))
+            .map_err(WatchError::ResumeFailed)
+            .map_err(anyhow::Error::from)
     }
 }
 
 struct RealStorage {}
-impl RealStorage {
-    fn system_time_to_millis(time: SystemTime) -> Result<u128> {
-        time.duration_since(SystemTime::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .map_err(Into::into)
-    }
-}
 
 impl Storage for RealStorage {
     fn timestamp(&mut self, filename: &str) -> Result<u128> {
-        let error_context = "RealStorage.timestamp";
-        let metadata =
-            fs::metadata(filename).with_context(|| format!("{}: metadata", error_context))?;
+        let metadata = fs::metadata(filename).map_err(WatchError::TimestampReadFailed)?;
         let modified = metadata
             .modified()
-            .with_context(|| format!("{}: modified", error_context))?;
-        Self::system_time_to_millis(modified)
-            .with_context(|| format!("{}: system_time_to_millis", error_context))
+            .map_err(WatchError::TimestampReadFailed)?;
+        let millis = modified
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_err(WatchError::TimestampComputeFailed)?
+            .as_millis();
+        Ok(millis)
     }
 
     fn load(&mut self, dates: DateRange, filename: &str) -> Result<LoadedFile> {
@@ -193,7 +206,6 @@ impl Storage for RealStorage {
 struct RealEditor {}
 impl Editor for RealEditor {
     fn edit_file(&self, filename: &str, line_number: u32) -> Result<()> {
-        let error_context = "RealEditor.edit_file";
         let editor = get_editor();
         let mut command = Command::new(editor.clone());
         if supports_line_num_arg(editor.as_str()) {
@@ -203,15 +215,11 @@ impl Editor for RealEditor {
         command.arg(filename);
         let status = command
             .spawn()
-            .with_context(|| format!("{}: spawn", error_context))?
+            .map_err(WatchError::EditorFailure)?
             .wait()
-            .with_context(|| format!("{}: wait", error_context))?;
+            .map_err(WatchError::EditorFailure)?;
         if !status.success() {
-            return Err(anyhow!(
-                "{}: editor command failed: {}",
-                error_context,
-                status
-            ));
+            return Err(EditorExitCode(status.code()).into());
         }
         Ok(())
     }
@@ -399,12 +407,7 @@ where
         match user_request {
             UserRequest::Left => self.menu = self.menu.left(),
             UserRequest::Right => self.menu = self.menu.right(),
-            x => {
-                return Err(anyhow!(
-                    "WatchApp.change_menu_selection: invalid command({:?})",
-                    x
-                ));
-            }
+            _ => (),
         };
         Ok(UICommand::UpdateMenu)
     }
@@ -475,22 +478,26 @@ where
     }
 
     fn edit(&mut self) -> Result<UICommand> {
-        let line_number = self
-            .loaded
-            .day_entries()
-            .last()
-            .map(|e| e.line_number())
+        let line_number = *self
+            .find_today_or_later(Date::today())
+            .map(|date| date.line_number())
             .unwrap_or(&0);
 
-        self.app_screen
-            .pause()
-            .with_context(|| "failed to pause to run editor")?;
+        self.app_screen.pause()?;
         let rc = self
             .editor
-            .edit_file(self.filename, *line_number)
+            .edit_file(self.filename, line_number)
             .and_then(|_| self.load(true));
         _ = self.app_screen.resume();
         rc
+    }
+
+    fn find_today_or_later(&self, today: Date) -> Option<&DayEntry> {
+        self.loaded
+            .day_entries()
+            .iter()
+            .find(|e| e.date() >= &today)
+            .or_else(|| self.loaded.day_entries().last())
     }
 }
 
@@ -753,15 +760,6 @@ mod tests {
             env::set_var(key, "/usr/bin/emacsclient -n");
             assert_eq!(get_editor_name(), "emacsclient".to_string());
         }
-    }
-
-    #[test]
-    fn test_millis() {
-        let datetime_str = "2024-06-09T12:34:56Z";
-        let dt: DateTime<Utc> = datetime_str.parse().unwrap(); // ISO 8601 format
-        let system_time: SystemTime = SystemTime::from(dt);
-        let millis = RealStorage::system_time_to_millis(system_time).unwrap();
-        assert_eq!(millis, 1717936496000);
     }
 
     #[test]

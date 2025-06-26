@@ -1,6 +1,6 @@
 [package]
 name = "time-report"
-version = "1.4.2"
+version = "1.5.0"
 edition = "2024"
 
 [dependencies]
@@ -14,6 +14,7 @@ scopeguard = "1.2.0"
 crossterm = "0.29.0"
 anyhow = "1.0.98"
 ratatui = "0.29.0"
+thiserror = "2.0.12"
 mockall = "0.13.1"
 tempfile = "3"
 filetime = "0.2.25"

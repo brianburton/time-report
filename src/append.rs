@@ -1,6 +1,7 @@
 use crate::core::{create_temp_file, delete_file};
 use crate::model::{Date, DayEntry, Project};
-use anyhow::{Context, Result, anyhow};
+use crate::parse::try_parse_date_line;
+use anyhow::Result;
 use im::{HashMap, Vector};
 use scopeguard::defer;
 use std::cmp::Ordering;
@@ -8,6 +9,23 @@ use std::fs::File;
 use std::io::{BufRead, Write};
 use std::path::Path;
 use std::{fs, io};
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+enum ParseError {
+    #[error("Date already in file: {0}")]
+    DuplicateDate(Date),
+    #[error("Error opening file {0}: {1}")]
+    OpenFile(String, #[source] io::Error),
+    #[error("Error creating temp file {0}: {1}")]
+    CreateFile(String, #[source] io::Error),
+    #[error("Error writing to file {0}: {1}")]
+    WriteFailed(String, #[source] io::Error),
+    #[error("Error reading from file {0}: {1}")]
+    ReadFailed(String, #[source] io::Error),
+    #[error("Error renaming file from {0} to {1}: {2}")]
+    RenameFile(String, String, #[source] io::Error),
+}
 
 pub fn recent_projects(
     all_day_entries: &Vector<DayEntry>,
@@ -26,17 +44,10 @@ pub fn validate_date(all_day_entries: &Vector<DayEntry>, date: Date) -> Result<(
         match day.date().cmp(&date) {
             Ordering::Less => {}
             Ordering::Equal => {
-                return Err(anyhow!(
-                    "append_to_file: date already in file: date='{}'",
-                    date
-                ));
+                return Err(ParseError::DuplicateDate(date).into());
             }
             Ordering::Greater => {
-                return Err(anyhow!(
-                    "append_to_file: newer date in file: date='{}' newer='{}'",
-                    date,
-                    day.date()
-                ));
+                return Ok(());
             }
         }
     }
@@ -56,49 +67,51 @@ fn create_date_str(prev_blank: bool, date: Date, projects: &Vector<Project>) -> 
 }
 
 pub fn append_to_file(filename: &str, date: Date, projects: &Vector<Project>) -> Result<()> {
-    let error_context = "append_to_file";
     let temp_file = create_temp_file(filename)?;
     defer! { delete_file(&temp_file).unwrap_or(())}
 
     let input_path = Path::new(filename);
     let input_file =
-        File::open(input_path).with_context(|| format!("{}: open failed", error_context))?;
+        File::open(input_path).map_err(|e| ParseError::OpenFile(filename.to_string(), e))?;
     let reader = io::BufReader::new(input_file);
 
     let output_path = Path::new(&temp_file);
     let output_file =
-        File::create(output_path).with_context(|| format!("{}: create failed", error_context))?;
+        File::create(output_path).map_err(|e| ParseError::CreateFile(filename.to_string(), e))?;
     let mut writer = io::BufWriter::new(output_file);
 
     let mut appended = false;
     let mut prev_blank = true;
     for raw_line in reader.lines() {
-        let line = raw_line.with_context(|| format!("{}: read failed", error_context))?;
+        let line = raw_line.map_err(|e| ParseError::ReadFailed(filename.to_string(), e))?;
         let trimmed = line.trim();
-        if trimmed == "END" && !appended {
+        let is_later_date = try_parse_date_line(trimmed)
+            .map(|d| d >= date)
+            .unwrap_or(false);
+        if (is_later_date || trimmed == "END") && !appended {
             writer
                 .write_all(create_date_str(prev_blank, date, projects).as_bytes())
-                .with_context(|| format!("{}: write failed", error_context))?;
+                .map_err(|e| ParseError::WriteFailed(temp_file.to_string(), e))?;
             writer
                 .write_all("\n".as_bytes())
-                .with_context(|| format!("{}: write failed", error_context))?;
+                .map_err(|e| ParseError::WriteFailed(temp_file.to_string(), e))?;
             appended = true;
         }
         writer
             .write_all(line.as_bytes())
-            .with_context(|| format!("{}: write failed", error_context))?;
+            .map_err(|e| ParseError::WriteFailed(temp_file.to_string(), e))?;
         writer
             .write_all("\n".as_bytes())
-            .with_context(|| format!("{}: write failed", error_context))?;
+            .map_err(|e| ParseError::WriteFailed(temp_file.to_string(), e))?;
         prev_blank = trimmed.is_empty();
     }
     if !appended {
         writer
             .write_all(create_date_str(prev_blank, date, projects).as_bytes())
-            .with_context(|| format!("{}: write failed", error_context))?;
+            .map_err(|e| ParseError::WriteFailed(temp_file.to_string(), e))?;
     }
     fs::rename(&temp_file, filename)
-        .with_context(|| format!("{}: rename failed", error_context))?;
+        .map_err(|e| ParseError::RenameFile(temp_file.to_string(), filename.to_string(), e))?;
     Ok(())
 }
 

@@ -1,15 +1,31 @@
-use std::fmt::Display;
-
 use crate::core::parse_capture_group;
-use anyhow::{Result, anyhow};
+use anyhow::{Result, bail, ensure};
 use chrono::Datelike;
 use derive_getters::Getters;
 use im::{HashSet, OrdSet, Vector, hashset, vector};
 use lazy_static::lazy_static;
 use regex::Regex;
+use std::fmt::Display;
+use thiserror::Error;
 
 #[cfg(test)]
 mod tests;
+
+#[derive(Error, Debug)]
+enum ModelError {
+    #[error("Invalid date: {0}")]
+    InvalidDateString(String, #[source] anyhow::Error),
+    #[error("Invalid time: {hour}:{minute}")]
+    InvalidTime { hour: u16, minute: u16 },
+    #[error("Invalid time: {0}")]
+    InvalidTimeString(String, #[source] anyhow::Error),
+    #[error("Invalid date: {month}/{day}/{year}")]
+    InvalidDate { year: u16, month: u8, day: u8 },
+    #[error("Invalid time range: {from}-{to}")]
+    InvalidTimeRange { from: Time, to: Time },
+    #[error("Conflicting project times: {0}")]
+    ConflictingProjectTimes(String),
+}
 
 lazy_static! {
     static ref TIME_RE: Regex = Regex::new(r"(\d{2})(\d{2})").unwrap();
@@ -54,18 +70,20 @@ impl Display for Time {
 
 impl Time {
     pub fn new(hour: u16, minute: u16) -> Result<Time> {
-        if !is_valid_time(hour, minute) {
-            Err(anyhow!("Time::new: not a valid time"))
-        } else {
-            let minute = hour * 60 + minute;
-            Ok(Time { minute })
-        }
+        ensure!(
+            is_valid_time(hour, minute),
+            ModelError::InvalidTime { hour, minute }
+        );
+        let minute = hour * 60 + minute;
+        Ok(Time { minute })
     }
 
     pub fn parse(text: &str) -> Result<Time> {
         let re_captures = TIME_RE.captures(text);
-        let h: u16 = parse_capture_group("Time::parse:hour", text, &re_captures, 1)?;
-        let m: u16 = parse_capture_group("Time::parse:minute", text, &re_captures, 2)?;
+        let h: u16 = parse_capture_group("hour", &re_captures, 1)
+            .map_err(|e| ModelError::InvalidTimeString(text.to_string(), e))?;
+        let m: u16 = parse_capture_group("minute", &re_captures, 2)
+            .map_err(|e| ModelError::InvalidTimeString(text.to_string(), e))?;
         Self::new(h, m)
     }
 
@@ -97,21 +115,21 @@ impl Display for Date {
 
 impl Date {
     pub fn new(year: u16, month: u8, day: u8) -> Result<Date> {
-        if !is_valid_date(year, month, day) {
-            Err(anyhow!(format!(
-                "Date::new: not a valid date: {}/{}/{}",
-                month, day, year
-            )))
-        } else {
-            Ok(Date { year, month, day })
-        }
+        ensure!(
+            is_valid_date(year, month, day),
+            ModelError::InvalidDate { year, month, day }
+        );
+        Ok(Date { year, month, day })
     }
 
     pub fn parse(text: &str) -> Result<Date> {
         let re_captures = DATE_RE.captures(text);
-        let m: u8 = parse_capture_group("Date::parse:month", text, &re_captures, 1)?;
-        let d: u8 = parse_capture_group("Date::parse:day", text, &re_captures, 2)?;
-        let y: u16 = parse_capture_group("Date::parse:year", text, &re_captures, 3)?;
+        let m: u8 = parse_capture_group("month", &re_captures, 1)
+            .map_err(|e| ModelError::InvalidDateString(text.to_string(), e))?;
+        let d: u8 = parse_capture_group("day", &re_captures, 2)
+            .map_err(|e| ModelError::InvalidDateString(text.to_string(), e))?;
+        let y: u16 = parse_capture_group("year", &re_captures, 3)
+            .map_err(|e| ModelError::InvalidDateString(text.to_string(), e))?;
         Self::new(y, m, d)
     }
 
@@ -360,11 +378,8 @@ impl Display for TimeRange {
 
 impl TimeRange {
     pub fn new(from: Time, to: Time) -> Result<TimeRange> {
-        if from >= to {
-            Err(anyhow!("TimeRange::new: out of order time range"))
-        } else {
-            Ok(TimeRange { from, to })
-        }
+        ensure!(from <= to, ModelError::InvalidTimeRange { from, to });
+        Ok(TimeRange { from, to })
     }
 
     pub fn distinct(a: &TimeRange, b: &TimeRange) -> bool {
@@ -423,7 +438,7 @@ impl ProjectTimes {
                 project.code,
                 ordset_to_string(&conflicts)
             );
-            return Err(anyhow!("ProjectTimes::new: {}", detail));
+            bail!(ModelError::ConflictingProjectTimes(detail));
         }
         sorted.sort();
         Ok(ProjectTimes {
