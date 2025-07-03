@@ -200,16 +200,22 @@ fn compute_report_data(
     })
 }
 
+fn render_project_label(project: &Project) -> String {
+    if project.subcode().is_empty() {
+        format!("{},{}", project.client(), project.code())
+    } else {
+        format!(
+            "{},{},{}",
+            project.client(),
+            project.code(),
+            project.subcode()
+        )
+    }
+}
+
 fn create_project_labels(projects: &OrdSet<Project>) -> Vector<String> {
-    let width = 4 + projects
-        .iter()
-        .map(|p| p.client().len() + p.code().len())
-        .max()
-        .unwrap_or(0);
-    let mut labels: Vector<String> = projects
-        .iter()
-        .map(|p| format!("{},{}", p.client(), p.code()))
-        .collect();
+    let mut labels: Vector<String> = projects.iter().map(render_project_label).collect();
+    let width = 4 + labels.iter().map(|label| label.len()).max().unwrap_or(0);
     labels.push_front("PROJECT".to_string());
     labels.push_front("".to_string());
     labels.push_back("TOTALS".to_string());
