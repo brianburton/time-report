@@ -6,6 +6,7 @@ use ratatui::{
 
 use crate::model::{Date, DateRange, DayEntry, Project};
 use crate::report;
+use crate::report::ReportMode;
 use crate::watch::WatchError::EditorExitCode;
 use crate::watch::paragraph::ParagraphBuilder;
 use crate::{append, parse};
@@ -283,6 +284,7 @@ enum UserRequest {
     Right,
     Resized,
     Timeout,
+    ToggleReportMode,
 }
 
 enum DisplayContent {
@@ -312,6 +314,7 @@ where
     filename: &'a str,
     read_timeout: Duration,
     update_delay_millis: u128,
+    report_mode: ReportMode,
     dates: &'a dyn Fn() -> DateRange,
     app_screen: &'a mut TAppScreen,
     storage: &'a mut TStorage,
@@ -341,6 +344,7 @@ where
             loaded: LoadedFile::empty(dates()),
             update_delay_millis: 500,
             read_timeout: Duration::from_millis(100),
+            report_mode: ReportMode::Detail,
             menu,
             app_screen,
             storage,
@@ -369,7 +373,7 @@ where
     fn update_screen(&mut self, what_to_display: &DisplayContent) -> Result<()> {
         match what_to_display {
             DisplayContent::Report(loaded_file) => {
-                let report = ReportScreen::new(&self.menu, loaded_file);
+                let report = ReportScreen::new(&self.menu, loaded_file, self.report_mode);
                 match report {
                     Ok(report) => self.app_screen.draw(&report),
                     Err(error) => {
@@ -399,6 +403,7 @@ where
             UserRequest::Right => self.change_menu_selection(event),
             UserRequest::Resized => Ok(UICommand::Report(self.loaded.clone())),
             UserRequest::Timeout => self.load(false),
+            UserRequest::ToggleReportMode => self.toggle_report_mode(),
         };
         result.or_else(|e| Ok(UICommand::DisplayError(e)))
     }
@@ -499,6 +504,11 @@ where
             .find(|e| e.date() >= &today)
             .or_else(|| self.loaded.day_entries().last())
     }
+
+    fn toggle_report_mode(&mut self) -> Result<UICommand> {
+        self.report_mode = self.report_mode.toggle();
+        self.load(true)
+    }
 }
 
 fn create_menu() -> Result<Menu<UserRequest>> {
@@ -514,6 +524,12 @@ fn create_menu() -> Result<Menu<UserRequest>> {
             "Append",
             "Add current date to the file along with some recently used projects.",
             'a'
+        ),
+        MenuItem::new(
+            UserRequest::ToggleReportMode,
+            "Mode",
+            "Toggle between detailed and summary report mode.",
+            'm'
         ),
         MenuItem::new(
             UserRequest::Reload,
@@ -596,9 +612,9 @@ fn format_warnings(file: &LoadedFile) -> ParagraphBuilder {
     builder
 }
 
-fn format_report(file: &LoadedFile) -> Result<ParagraphBuilder> {
+fn format_report(file: &LoadedFile, report_mode: ReportMode) -> Result<ParagraphBuilder> {
     let mut builder = ParagraphBuilder::new();
-    for line in report::create_report(file.dates, &file.day_entries, report::ReportMode::Detail)? {
+    for line in report::create_report(file.dates, &file.day_entries, report_mode)? {
         builder.add_plain(line).new_line();
     }
     builder.titled("Report".to_string());
@@ -638,10 +654,10 @@ struct ReportScreen {
 }
 
 impl ReportScreen {
-    fn new(menu: &Menu<UserRequest>, file: &LoadedFile) -> Result<Self> {
+    fn new(menu: &Menu<UserRequest>, file: &LoadedFile, report_mode: ReportMode) -> Result<Self> {
         let screen = ReportScreen {
             menu: format_menu(menu),
-            report: format_report(file)?,
+            report: format_report(file, report_mode)?,
             warnings: format_warnings_summary(file),
         };
         Ok(screen)

@@ -10,6 +10,14 @@ pub enum ReportMode {
     Summary,
 }
 
+impl ReportMode {
+    pub fn toggle(&self) -> Self {
+        match self {
+            ReportMode::Detail => ReportMode::Summary,
+            ReportMode::Summary => ReportMode::Detail,
+        }
+    }
+}
 #[derive(Debug, Hash, PartialEq, Eq, Clone)]
 struct Key {
     day_name: String,
