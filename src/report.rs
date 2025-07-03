@@ -4,6 +4,12 @@ use model::{Date, DateRange, DayEntry, Project};
 
 use crate::model::{self, ProjectTimes};
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum ReportMode {
+    Detail,
+    Summary,
+}
+
 #[derive(Debug, Hash, PartialEq, Eq, Clone)]
 struct Key {
     day_name: String,
@@ -119,8 +125,12 @@ struct ReportData {
     weekdays: usize,
 }
 
-pub fn create_report(dates: DateRange, day_entries: &Vector<DayEntry>) -> Result<Vector<String>> {
-    let data = compute_report_data(dates, day_entries)?;
+pub fn create_report(
+    dates: DateRange,
+    day_entries: &Vector<DayEntry>,
+    mode: ReportMode,
+) -> Result<Vector<String>> {
+    let data = compute_report_data(dates, day_entries, mode)?;
     let lines = render_report_data(&data)?;
     Ok(lines)
 }
@@ -135,7 +145,18 @@ pub fn day_entries_in_range(dates: &DateRange, day_entries: &Vector<DayEntry>) -
     result
 }
 
-fn compute_report_data(dates: DateRange, day_entries: &Vector<DayEntry>) -> Result<ReportData> {
+fn adjust_day_entry_for_mode(day_entry: &DayEntry, mode: ReportMode) -> DayEntry {
+    match mode {
+        ReportMode::Summary => day_entry.without_subcodes(),
+        ReportMode::Detail => day_entry.clone(),
+    }
+}
+
+fn compute_report_data(
+    dates: DateRange,
+    day_entries: &Vector<DayEntry>,
+    report_mode: ReportMode,
+) -> Result<ReportData> {
     let mut weeks = HashMap::<u32, WeekData>::new();
     let week_nums = dates.iter().map(|d| d.week_num()).collect::<OrdSet<u32>>();
     for w in week_nums {
@@ -146,14 +167,15 @@ fn compute_report_data(dates: DateRange, day_entries: &Vector<DayEntry>) -> Resu
     let mut current_week = dates.first().week_num();
 
     for entry in day_entries {
+        let entry = adjust_day_entry_for_mode(entry, report_mode);
         let entry_week = entry.date().week_num();
         if entry_week != current_week {
             weeks.insert(current_week, current_data.clone());
             current_data.clear();
             current_week = entry_week;
         };
-        totals.add_day_entry(entry);
-        current_data.add_day_entry(entry);
+        totals.add_day_entry(&entry);
+        current_data.add_day_entry(&entry);
     }
 
     weeks.insert(current_week, current_data);

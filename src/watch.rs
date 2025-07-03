@@ -598,7 +598,7 @@ fn format_warnings(file: &LoadedFile) -> ParagraphBuilder {
 
 fn format_report(file: &LoadedFile) -> Result<ParagraphBuilder> {
     let mut builder = ParagraphBuilder::new();
-    for line in report::create_report(file.dates, &file.day_entries)? {
+    for line in report::create_report(file.dates, &file.day_entries, report::ReportMode::Detail)? {
         builder.add_plain(line).new_line();
     }
     builder.titled("Report".to_string());

@@ -421,6 +421,14 @@ impl Project {
             subcode: subcode.to_string(),
         }
     }
+
+    pub fn without_subcode(&self) -> Project {
+        Project {
+            client: self.client.clone(),
+            code: self.code.clone(),
+            subcode: String::new(),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Clone, Getters)]
@@ -448,6 +456,13 @@ impl ProjectTimes {
             time_ranges: sorted,
         })
     }
+
+    pub fn without_subcodes(&self) -> Self {
+        ProjectTimes {
+            project: self.project.without_subcode(),
+            time_ranges: self.time_ranges.clone(),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Clone, Getters)]
@@ -463,6 +478,14 @@ impl DayEntry {
             date,
             projects: projects.clone(),
             line_number,
+        }
+    }
+
+    pub fn without_subcodes(&self) -> Self {
+        let projects = self.projects.iter().map(|p| p.without_subcodes()).collect();
+        Self {
+            projects,
+            ..self.clone()
         }
     }
 }

@@ -53,7 +53,7 @@ fn command_report(args: &mut Args) -> Result<()> {
     println!("Reporting from {} to {}", dates.first(), dates.last());
 
     let day_entries = report::day_entries_in_range(&dates, &all_day_entries);
-    let lines = report::create_report(dates, &day_entries)?;
+    let lines = report::create_report(dates, &day_entries, report::ReportMode::Detail)?;
     for line in lines {
         println!("{}", line);
     }
