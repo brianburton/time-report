@@ -165,6 +165,11 @@ fn compute_report_data(
     day_entries: &Vector<DayEntry>,
     report_mode: ReportMode,
 ) -> Result<ReportData> {
+    let day_entries = &day_entries
+        .iter()
+        .filter(|e| dates.contains(e.date()))
+        .map(|e| adjust_day_entry_for_mode(e, report_mode))
+        .collect::<Vector<DayEntry>>();
     let mut weeks = HashMap::<u32, WeekData>::new();
     let week_nums = dates.iter().map(|d| d.week_num()).collect::<OrdSet<u32>>();
     for w in week_nums {
@@ -175,15 +180,14 @@ fn compute_report_data(
     let mut current_week = dates.first().week_num();
 
     for entry in day_entries {
-        let entry = adjust_day_entry_for_mode(entry, report_mode);
         let entry_week = entry.date().week_num();
         if entry_week != current_week {
             weeks.insert(current_week, current_data.clone());
             current_data.clear();
             current_week = entry_week;
         };
-        totals.add_day_entry(&entry);
-        current_data.add_day_entry(&entry);
+        totals.add_day_entry(entry);
+        current_data.add_day_entry(entry);
     }
 
     weeks.insert(current_week, current_data);
