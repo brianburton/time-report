@@ -617,7 +617,11 @@ fn format_report(file: &LoadedFile, report_mode: ReportMode) -> Result<Paragraph
     for line in report::create_report(file.dates, &file.day_entries, report_mode)? {
         builder.add_plain(line).new_line();
     }
-    builder.titled("Report".to_string());
+    let title = match report_mode {
+        ReportMode::Detail => "Detail Report",
+        ReportMode::Summary => "Summary Report",
+    };
+    builder.titled(title.to_string());
     Ok(builder)
 }
 
