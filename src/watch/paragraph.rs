@@ -10,6 +10,7 @@ pub struct ParagraphBuilder {
     spans: Vector<SpanSpec>,
     lines: Vector<LineSpec>,
     border: Option<String>,
+    start_line: usize,
 }
 
 impl ParagraphBuilder {
@@ -18,7 +19,13 @@ impl ParagraphBuilder {
             spans: vector!(),
             lines: vector!(),
             border: None,
+            start_line: 0,
         }
+    }
+
+    pub fn start_line(&mut self, start: usize) -> &mut Self {
+        self.start_line = start;
+        self
     }
 
     pub fn add_plain(&mut self, s: String) -> &mut Self {
@@ -51,9 +58,12 @@ impl ParagraphBuilder {
     }
 
     pub fn build(&self) -> Paragraph {
+        let line_count = Ord::max(1, self.lines.len());
+        let skip = Ord::min(line_count - 1, self.start_line);
         let lines: Vec<Line> = self
             .lines
             .iter()
+            .skip(skip)
             .map(|spec| Self::build_line(spec))
             .collect();
         let para = Paragraph::new(lines);

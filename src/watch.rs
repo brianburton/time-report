@@ -81,6 +81,7 @@ enum ScreenEvent {
     Right,
     Resized,
     Timeout,
+    Scroll(i8),
 }
 
 trait Renderable {
@@ -130,6 +131,10 @@ impl<T: Backend> AppScreen for RealAppScreen<T> {
                     KeyCode::Enter => return Ok(ScreenEvent::Enter),
                     KeyCode::Left => return Ok(ScreenEvent::Left),
                     KeyCode::Right => return Ok(ScreenEvent::Right),
+                    KeyCode::Up => return Ok(ScreenEvent::Scroll(-1)),
+                    KeyCode::Down => return Ok(ScreenEvent::Scroll(1)),
+                    KeyCode::PageUp => return Ok(ScreenEvent::Scroll(-10)),
+                    KeyCode::PageDown => return Ok(ScreenEvent::Scroll(10)),
                     _ => {}
                 },
                 Event::Resize(_, _) => return Ok(ScreenEvent::Resized),
@@ -285,6 +290,7 @@ enum UserRequest {
     Resized,
     Timeout,
     ToggleReportMode,
+    Scroll(i8),
 }
 
 enum DisplayContent {
@@ -315,6 +321,7 @@ where
     read_timeout: Duration,
     update_delay_millis: u128,
     report_mode: ReportMode,
+    start_line: usize,
     dates: &'a dyn Fn() -> DateRange,
     app_screen: &'a mut TAppScreen,
     storage: &'a mut TStorage,
@@ -345,6 +352,7 @@ where
             update_delay_millis: 500,
             read_timeout: Duration::from_millis(100),
             report_mode: ReportMode::Detail,
+            start_line: 0,
             menu,
             app_screen,
             storage,
@@ -370,10 +378,25 @@ where
         }
     }
 
+    fn scroll(&mut self, amount: i8) -> Result<UICommand> {
+        if amount < 0 {
+            let lines = (-amount) as usize;
+            if lines >= self.start_line {
+                self.start_line = 0;
+            } else {
+                self.start_line -= lines;
+            }
+        } else {
+            self.start_line += amount as usize;
+        }
+        Ok(UICommand::Report(self.loaded.clone()))
+    }
+
     fn update_screen(&mut self, what_to_display: &DisplayContent) -> Result<()> {
         match what_to_display {
             DisplayContent::Report(loaded_file) => {
-                let report = ReportScreen::new(&self.menu, loaded_file, self.report_mode);
+                let report =
+                    ReportScreen::new(&self.menu, loaded_file, self.report_mode, self.start_line);
                 match report {
                     Ok(report) => self.app_screen.draw(&report),
                     Err(error) => {
@@ -404,6 +427,7 @@ where
             UserRequest::Resized => Ok(UICommand::Report(self.loaded.clone())),
             UserRequest::Timeout => self.load(false),
             UserRequest::ToggleReportMode => self.toggle_report_mode(),
+            UserRequest::Scroll(amount) => self.scroll(amount),
         };
         result.or_else(|e| Ok(UICommand::DisplayError(e)))
     }
@@ -432,6 +456,7 @@ where
                 ScreenEvent::Right => return Ok(UserRequest::Right),
                 ScreenEvent::Timeout => return Ok(UserRequest::Timeout),
                 ScreenEvent::Resized => return Ok(UserRequest::Resized),
+                ScreenEvent::Scroll(amount) => return Ok(UserRequest::Scroll(amount)),
             }
         }
     }
@@ -507,7 +532,7 @@ where
 
     fn toggle_report_mode(&mut self) -> Result<UICommand> {
         self.report_mode = self.report_mode.toggle();
-        self.load(true)
+        Ok(UICommand::Report(self.loaded.clone()))
     }
 }
 
@@ -612,7 +637,11 @@ fn format_warnings(file: &LoadedFile) -> ParagraphBuilder {
     builder
 }
 
-fn format_report(file: &LoadedFile, report_mode: ReportMode) -> Result<ParagraphBuilder> {
+fn format_report(
+    file: &LoadedFile,
+    report_mode: ReportMode,
+    start_line: usize,
+) -> Result<ParagraphBuilder> {
     let mut builder = ParagraphBuilder::new();
     for line in report::create_report(file.dates, &file.day_entries, report_mode)? {
         builder.add_plain(line).new_line();
@@ -621,7 +650,7 @@ fn format_report(file: &LoadedFile, report_mode: ReportMode) -> Result<Paragraph
         ReportMode::Detail => "Detail Report",
         ReportMode::Summary => "Summary Report",
     };
-    builder.titled(title.to_string());
+    builder.titled(title.to_string()).start_line(start_line);
     Ok(builder)
 }
 
@@ -658,10 +687,15 @@ struct ReportScreen {
 }
 
 impl ReportScreen {
-    fn new(menu: &Menu<UserRequest>, file: &LoadedFile, report_mode: ReportMode) -> Result<Self> {
+    fn new(
+        menu: &Menu<UserRequest>,
+        file: &LoadedFile,
+        report_mode: ReportMode,
+        start_line: usize,
+    ) -> Result<Self> {
         let screen = ReportScreen {
             menu: format_menu(menu),
-            report: format_report(file, report_mode)?,
+            report: format_report(file, report_mode, start_line)?,
             warnings: format_warnings_summary(file),
         };
         Ok(screen)
