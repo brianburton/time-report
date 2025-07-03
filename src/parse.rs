@@ -37,9 +37,14 @@ lazy_static! {
         r"(^\d{4}-\d{4}(,\d{4}-\d{4})*(,\d{4}-)?$)|(^\d{4}-\d{4}(,\d{4}-\d{4})*$)|(^\d{4}-$)"
     )
     .unwrap();
-    static ref EMPTY_TIME_LINE_RE: Regex =
-        Regex::new(r"^([a-z]+),([-/ A-Za-z0-9]+) *: *$").unwrap();
-    static ref TIME_LINE_RE: Regex = Regex::new(r"^([a-z]+),([-/ A-Za-z0-9]+) *: *(.*)$").unwrap();
+    static ref EMPTY_TIME_LINE_RE: Regex = Regex::new(
+        r"^(?<client>[a-z]+),(?<code>[-/ A-Za-z0-9]+)(,(?<subcode>[-/ A-Za-z0-9]+))? *: *$"
+    )
+    .unwrap();
+    static ref TIME_LINE_RE: Regex = Regex::new(
+        r"^(?<client>[a-z]+),(?<code>[-/ A-Za-z0-9]+)(,(?<subcode>[-/ A-Za-z0-9]+))? *: *(?<times>.*)$"
+    )
+    .unwrap();
     static ref DATE_LINE_RE: Regex = Regex::new(r"^Date: [A-Za-z]+ (\d{2}/\d{2}/\d{4})$").unwrap();
 }
 
@@ -112,17 +117,18 @@ pub fn try_parse_date_line(line: &str) -> Option<Date> {
     parse_date_line(line).ok()
 }
 
-// Function to parse label and time ranges (e.g., "client,project: 0800-1200,1300-1310")
+// Function to parse label and time ranges (e.g., "client,code,subcode: 0800-1200,1300-1310")
 fn parse_time_line(line: &str) -> Result<(ProjectTimes, bool)> {
     let caps = TIME_LINE_RE
         .captures(line)
         .ok_or_else(|| ParseError::InvalidTimeLine(line.to_string()))?;
-    let client = caps[1].to_string();
-    let project = caps[2].to_string();
-    let (time_ranges, incomplete) = parse_time_ranges(&caps[3])?;
+    let client = caps["client"].to_string();
+    let code = caps["code"].to_string();
+    let subcode = caps.name("subcode").map_or("", |m| m.as_str()).to_string();
+    let (time_ranges, incomplete) = parse_time_ranges(&caps["times"])?;
     Ok((
         ProjectTimes::new(
-            Project::new(client.as_str(), project.as_str()),
+            Project::new(client.as_str(), code.as_str(), subcode.as_str()),
             &time_ranges,
         )?,
         incomplete,

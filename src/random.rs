@@ -5,22 +5,22 @@ use rand::prelude::*;
 
 lazy_static! {
     static ref PROJECTS: Vector<Project> = vector!(
-        Project::new("nasa", "navigation system"),
-        Project::new("nasa", "saturn v launch"),
-        Project::new("nasa", "astronaut recovery"),
-        Project::new("nasa", "monkey training"),
-        Project::new("nasa", "meeting"),
-        Project::new("spacex", "elon meeting"),
-        Project::new("spacex", "landing software"),
-        Project::new("spacex", "navigation"),
-        Project::new("spacex", "pr meeting"),
-        Project::new("blue", "jeff meeting"),
-        Project::new("blue", "aws interop"),
-        Project::new("blue", "navigation fixes"),
-        Project::new("carnival", "gps upgrade"),
-        Project::new("carnival", "hull scrub"),
-        Project::new("carnival", "lifeboat repairs"),
-        Project::new("carnival", "band auditions")
+        Project::new("nasa", "navigation system", ""),
+        Project::new("nasa", "saturn v launch", ""),
+        Project::new("nasa", "astronaut recovery", ""),
+        Project::new("nasa", "monkey training", ""),
+        Project::new("nasa", "meeting", ""),
+        Project::new("spacex", "elon meeting", ""),
+        Project::new("spacex", "landing software", ""),
+        Project::new("spacex", "navigation", ""),
+        Project::new("spacex", "pr meeting", ""),
+        Project::new("blue", "jeff meeting", ""),
+        Project::new("blue", "aws interop", ""),
+        Project::new("blue", "navigation fixes", ""),
+        Project::new("carnival", "gps upgrade", ""),
+        Project::new("carnival", "hull scrub", ""),
+        Project::new("carnival", "lifeboat repairs", ""),
+        Project::new("carnival", "band auditions", "")
     );
     static ref EIGHT_AM: Time = Time::new(8, 0).unwrap();
     static ref NOON: Time = Time::new(12, 0).unwrap();

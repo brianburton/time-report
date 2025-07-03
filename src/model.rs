@@ -410,13 +410,15 @@ fn find_overlapping_time_ranges(time_ranges: &Vector<TimeRange>) -> OrdSet<TimeR
 pub struct Project {
     client: String,
     code: String,
+    subcode: String,
 }
 
 impl Project {
-    pub fn new(client: &str, code: &str) -> Project {
+    pub fn new(client: &str, code: &str, subcode: &str) -> Project {
         Project {
             client: client.to_string(),
             code: code.to_string(),
+            subcode: subcode.to_string(),
         }
     }
 }

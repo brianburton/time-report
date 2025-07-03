@@ -40,10 +40,24 @@ fn test_parse_date_line() {
 }
 
 #[test]
-fn test_parse_label_line() {
+fn test_parse_time_line() {
     let line = "abc,xyz: 0800-1200,1300-1310,1318-1708";
     let expected = ProjectTimes::new(
-        Project::new("abc", "xyz"),
+        Project::new("abc", "xyz", ""),
+        &vector![
+            time_range(8, 0, 12, 0),
+            time_range(13, 0, 13, 10),
+            time_range(13, 18, 17, 8),
+        ],
+    );
+    assert_eq!(parse_time_line(line).unwrap().0, expected.unwrap());
+}
+
+#[test]
+fn test_parse_time_line_with_subcode() {
+    let line = "abc,def,xyz: 0800-1200,1300-1310,1318-1708";
+    let expected = ProjectTimes::new(
+        Project::new("abc", "def", "xyz"),
         &vector![
             time_range(8, 0, 12, 0),
             time_range(13, 0, 13, 10),
@@ -64,7 +78,7 @@ fn test_parse_file() {
         Date::new(2025, 4, 3).unwrap(),
         &vector!(
             ProjectTimes::new(
-                Project::new("abc", "xyz"),
+                Project::new("abc", "xyz", ""),
                 &vector!(
                     time_range(8, 0, 12, 0),
                     time_range(13, 0, 13, 10),
@@ -73,7 +87,7 @@ fn test_parse_file() {
             )
             .unwrap(),
             ProjectTimes::new(
-                Project::new("def", "uvw"),
+                Project::new("def", "uvw", ""),
                 &vector!(time_range(12, 0, 13, 0),),
             )
             .unwrap(),
