@@ -10,6 +10,8 @@ I used this text file format to track my billable hours for years when working a
 
 Each day in the time log starts with a `Date:` line followed by one or more
 project lines.  Each project line starts with a client id, comma, and project id.
+An optional sub-project id can be provided as well.  Sub-projects are reported separately
+in Detail report mode but aggregated under the project code in Summary report mode.
 These are followed by a `:` and a series of comma separated start and stop times
 in the form `hhmm-hhmm`.
 
@@ -46,3 +48,11 @@ It also listens for and responds to single character commands:
 * `r`: Reloads and prints the report immediately.
 * `a`: Appends the current date to the file then reloads and displays the report.
 * `e`: Opens the file in the user's editor.  Reloads and displays the report when editor quits.
+* `m`: Toggles between Summary and Detail report modes.
+
+If the report is too long to fit in the window you can scroll:
+
+* PageUp or Meta-v: Up several lines.
+* PageDown or Control-v: Down several lines.
+* Up Arrow: Up one line.
+* Down Arrow: Down one line.
