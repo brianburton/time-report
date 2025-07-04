@@ -11,8 +11,8 @@ use crate::watch::WatchError::EditorExitCode;
 use crate::watch::paragraph::ParagraphBuilder;
 use crate::{append, parse};
 use anyhow::Result;
-use crossterm::event::KeyCode;
 use crossterm::event::{Event, poll, read};
+use crossterm::event::{KeyCode, KeyModifiers};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use derive_getters::Getters;
 use im::{Vector, vector};
@@ -84,6 +84,11 @@ enum ScreenEvent {
     Scroll(i8),
 }
 
+const SCROLL_UP_SLOW: ScreenEvent = ScreenEvent::Scroll(-1);
+const SCROLL_DOWN_SLOW: ScreenEvent = ScreenEvent::Scroll(1);
+const SCROLL_UP_FAST: ScreenEvent = ScreenEvent::Scroll(-10);
+const SCROLL_DOWN_FAST: ScreenEvent = ScreenEvent::Scroll(10);
+
 trait Renderable {
     fn render(&self, area: Rect, buf: &mut Buffer);
 }
@@ -127,14 +132,20 @@ impl<T: Backend> AppScreen for RealAppScreen<T> {
         while poll(timeout).map_err(WatchError::TerminalRead)? {
             match read().map_err(WatchError::TerminalRead)? {
                 Event::Key(event) => match event.code {
+                    KeyCode::Char('v') if event.modifiers == KeyModifiers::ALT => {
+                        return Ok(SCROLL_UP_FAST);
+                    }
+                    KeyCode::Char('v') if event.modifiers == KeyModifiers::CONTROL => {
+                        return Ok(SCROLL_DOWN_FAST);
+                    }
                     KeyCode::Char(c) => return Ok(ScreenEvent::Char(c)),
+                    KeyCode::Up => return Ok(SCROLL_UP_SLOW),
+                    KeyCode::Down => return Ok(SCROLL_DOWN_SLOW),
+                    KeyCode::PageUp => return Ok(SCROLL_UP_FAST),
+                    KeyCode::PageDown => return Ok(SCROLL_DOWN_FAST),
                     KeyCode::Enter => return Ok(ScreenEvent::Enter),
                     KeyCode::Left => return Ok(ScreenEvent::Left),
                     KeyCode::Right => return Ok(ScreenEvent::Right),
-                    KeyCode::Up => return Ok(ScreenEvent::Scroll(-1)),
-                    KeyCode::Down => return Ok(ScreenEvent::Scroll(1)),
-                    KeyCode::PageUp => return Ok(ScreenEvent::Scroll(-10)),
-                    KeyCode::PageDown => return Ok(ScreenEvent::Scroll(10)),
                     _ => {}
                 },
                 Event::Resize(_, _) => return Ok(ScreenEvent::Resized),
