@@ -585,6 +585,7 @@ fn menu_style(selected: bool) -> Style {
 
 fn format_menu<T: Copy>(menu: &Menu<T>) -> ParagraphBuilder {
     let mut builder = ParagraphBuilder::new();
+    builder.add_plain(" ".to_string());
     for (index, item) in menu.items().iter().enumerate() {
         let selected = index == *menu.selected_index();
         let style = menu_style(selected);
@@ -595,6 +596,7 @@ fn format_menu<T: Copy>(menu: &Menu<T>) -> ParagraphBuilder {
 
     builder
         .new_line()
+        .add_plain(" ".to_string())
         .add_plain(menu.description().to_string())
         .new_line()
         .bordered();
@@ -609,13 +611,13 @@ fn format_warnings_summary(file: &LoadedFile) -> ParagraphBuilder {
     let text = match file.warnings.len() {
         0 => "".to_string(),
         1 => file.warnings.get(0).unwrap().clone(),
-        _ => format!("There are {} warnings.", file.warnings.len()),
+        _ => format!(" There are {} warnings.", file.warnings.len()),
     };
     let mut builder = ParagraphBuilder::new();
     builder
         .add_styled(text, style)
         .new_line()
-        .titled("Warnings".to_string());
+        .titled(" Warnings ".to_string());
     builder
 }
 
@@ -623,13 +625,13 @@ fn format_warnings(file: &LoadedFile) -> ParagraphBuilder {
     let mut builder = ParagraphBuilder::new();
     if file.warnings.is_empty() {
         builder
-            .add_plain("There are no warnings to display.".to_string())
+            .add_plain(" There are no warnings to display.".to_string())
             .new_line();
     } else {
         let style = Style::new().fg(Color::Red);
         for warning in file.warnings.iter() {
             builder
-                .add_styled(format!("warning: {}", warning), style)
+                .add_styled(format!(" warning: {}", warning), style)
                 .new_line();
         }
     }
@@ -644,11 +646,14 @@ fn format_report(
 ) -> Result<ParagraphBuilder> {
     let mut builder = ParagraphBuilder::new();
     for line in report::create_report(file.dates, &file.day_entries, report_mode)? {
-        builder.add_plain(line).new_line();
+        builder
+            .add_plain(" ".to_string())
+            .add_plain(line)
+            .new_line();
     }
     let title = match report_mode {
-        ReportMode::Detail => "Detail Report",
-        ReportMode::Summary => "Summary Report",
+        ReportMode::Detail => " Detail Report ",
+        ReportMode::Summary => " Summary Report ",
     };
     builder.titled(title.to_string()).start_line(start_line);
     Ok(builder)
