@@ -333,6 +333,7 @@ where
     update_delay_millis: u128,
     report_mode: ReportMode,
     start_line: usize,
+    line_count: usize,
     dates: &'a dyn Fn() -> DateRange,
     app_screen: &'a mut TAppScreen,
     storage: &'a mut TStorage,
@@ -364,6 +365,7 @@ where
             read_timeout: Duration::from_millis(100),
             report_mode: ReportMode::Detail,
             start_line: 0,
+            line_count: 0,
             menu,
             app_screen,
             storage,
@@ -398,7 +400,8 @@ where
                 self.start_line -= lines;
             }
         } else {
-            self.start_line += amount as usize;
+            let new_start_line = self.start_line + amount as usize;
+            self.start_line = Ord::min(self.line_count, new_start_line);
         }
         Ok(UICommand::Report(self.loaded.clone()))
     }
@@ -409,7 +412,10 @@ where
                 let report =
                     ReportScreen::new(&self.menu, loaded_file, self.report_mode, self.start_line);
                 match report {
-                    Ok(report) => self.app_screen.draw(&report),
+                    Ok(report) => {
+                        self.line_count = report.report.line_count();
+                        self.app_screen.draw(&report)
+                    }
                     Err(error) => {
                         self.app_screen
                             .draw(&ErrorScreen::new(&self.menu, self.filename, &error))

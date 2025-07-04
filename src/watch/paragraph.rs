@@ -23,6 +23,10 @@ impl ParagraphBuilder {
         }
     }
 
+    pub fn line_count(&self) -> usize {
+        self.lines.len()
+    }
+
     pub fn start_line(&mut self, start: usize) -> &mut Self {
         self.start_line = start;
         self
