@@ -429,6 +429,14 @@ impl Project {
             subcode: String::new(),
         }
     }
+
+    pub fn format(&self) -> String {
+        if self.subcode.is_empty() {
+            format!("{},{}", self.client, self.code)
+        } else {
+            format!("{},{},{}", self.client, self.code, self.subcode)
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Clone, Getters)]

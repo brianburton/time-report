@@ -62,7 +62,7 @@ fn create_date_str(prev_blank: bool, date: Date, projects: &Vector<Project>) -> 
     s.push_str(format!("Date: {} {}\n", date.day_name(), date).as_str());
     projects
         .iter()
-        .for_each(|p| s.push_str(format!("{},{}: \n", p.client(), p.code()).as_str()));
+        .for_each(|p| s.push_str(format!("{}: \n", p.format()).as_str()));
     s
 }
 
