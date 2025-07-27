@@ -13,7 +13,7 @@ pub struct MenuItem<T: Clone + Copy> {
 
 impl<T: Clone + Copy> MenuItem<T> {
     pub fn new(value: T, name: &str, description: &str, key: char) -> MenuItem<T> {
-        let display_string = format!("{}:{}", key, name);
+        let display_string = format!("{key}:{name}");
         MenuItem {
             description: description.to_string(),
             display: display_string,

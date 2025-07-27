@@ -61,10 +61,10 @@ fn get_temp_file_specs(path: &str) -> Result<(u32, &str, &str)> {
     let orig = OpenOptions::new()
         .read(true)
         .open(path)
-        .with_context(|| format!("{}: open", error_context))?;
+        .with_context(|| format!("{error_context}: open"))?;
     let mode = orig
         .metadata()
-        .with_context(|| format!("{}: metadata", error_context))?
+        .with_context(|| format!("{error_context}: metadata"))?
         .permissions()
         .mode();
     Ok((mode, dir, name))

@@ -354,7 +354,7 @@ fn first_after(offsets: &Vector<usize>, target: usize) -> usize {
     offsets
         .iter()
         .find(|o| **o > target)
-        .map(|o| *o)
+        .copied()
         .unwrap_or(target)
 }
 
@@ -362,7 +362,7 @@ fn last_before(offsets: &Vector<usize>, target: usize) -> usize {
     offsets
         .iter()
         .rfind(|o| **o < target)
-        .map(|o| *o)
+        .copied()
         .unwrap_or(target)
 }
 

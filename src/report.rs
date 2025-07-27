@@ -232,10 +232,7 @@ fn create_project_labels(projects: &OrdSet<Project>) -> Vector<String> {
     labels.push_front("".to_string());
     labels.push_back("TOTALS".to_string());
     labels.push_back("REPORT".to_string());
-    labels
-        .iter()
-        .map(|s| format!("{:<w$}", s, w = width))
-        .collect()
+    labels.iter().map(|s| format!("{s:<width$}")).collect()
 }
 
 fn create_day_labels() -> String {
