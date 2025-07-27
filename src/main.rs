@@ -55,7 +55,7 @@ fn command_report(args: &mut Args) -> Result<()> {
     let day_entries = report::day_entries_in_range(&dates, &all_day_entries);
     let lines = report::create_report(dates, &day_entries, report::ReportMode::Detail)?;
     for line in lines {
-        println!("{}", line);
+        println!("{line}");
     }
     Ok(())
 }
@@ -71,7 +71,7 @@ fn command_watch(args: &mut Args) -> Result<()> {
 fn load_file(args: &mut Args) -> Result<(String, Vector<DayEntry>)> {
     let filename = get_filename(args)?;
 
-    println!("Loading {}...", filename);
+    println!("Loading {filename}...");
     let (all_day_entries, warnings) = parse::parse_file(&filename)?;
     warnings.iter().for_each(|w| eprintln!("warning: {w}"));
     println!("Loaded {} dates from {}", all_day_entries.len(), filename);

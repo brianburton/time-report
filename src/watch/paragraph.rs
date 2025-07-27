@@ -13,6 +13,10 @@ pub struct ParagraphBuilder {
     start_line: usize,
 }
 
+fn is_blank_line(line_spec: &LineSpec) -> bool {
+    line_spec.is_empty() || line_spec.iter().all(|(s, _)| s.trim().is_empty())
+}
+
 impl ParagraphBuilder {
     pub fn new() -> Self {
         Self {
@@ -25,6 +29,19 @@ impl ParagraphBuilder {
 
     pub fn line_count(&self) -> usize {
         self.lines.len()
+    }
+
+    pub fn section_starts(&self) -> Vector<usize> {
+        let mut sections = Vector::new();
+        let mut prev_blank = true;
+        self.lines.iter().enumerate().for_each(|(i, line)| {
+            let is_blank = is_blank_line(line);
+            if prev_blank && !is_blank {
+                sections.push_back(i);
+            }
+            prev_blank = is_blank;
+        });
+        sections
     }
 
     pub fn start_line(&mut self, start: usize) -> &mut Self {
@@ -96,5 +113,30 @@ impl Widget for ParagraphBuilder {
         Self: Sized,
     {
         self.build().render(area, buf)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_section_starts() {
+        let mut para = ParagraphBuilder::new();
+        assert_eq!(para.section_starts(), vector!());
+
+        para.add_plain("Hello".into()).new_line();
+        assert_eq!(para.section_starts(), vector!(0));
+
+        para.new_line().add_plain(" ".to_owned()).new_line();
+        assert_eq!(para.section_starts(), vector!(0));
+
+        para.add_plain("Testing".into()).new_line();
+        para.add_plain("Another".into()).new_line();
+        assert_eq!(para.section_starts(), vector!(0, 3));
+        para.new_line().new_line();
+        assert_eq!(para.section_starts(), vector!(0, 3));
+        para.add_plain("Last".into()).new_line();
+        assert_eq!(para.section_starts(), vector!(0, 3, 7));
     }
 }

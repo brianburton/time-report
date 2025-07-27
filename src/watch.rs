@@ -81,13 +81,21 @@ enum ScreenEvent {
     Right,
     Resized,
     Timeout,
-    Scroll(i8),
+    Scroll(ScrollAmount),
 }
 
-const SCROLL_UP_SLOW: ScreenEvent = ScreenEvent::Scroll(-1);
-const SCROLL_DOWN_SLOW: ScreenEvent = ScreenEvent::Scroll(1);
-const SCROLL_UP_FAST: ScreenEvent = ScreenEvent::Scroll(-10);
-const SCROLL_DOWN_FAST: ScreenEvent = ScreenEvent::Scroll(10);
+#[derive(Debug, Copy, Clone)]
+enum ScrollAmount {
+    DownLine,
+    DownWeek,
+    UpLine,
+    UpWeek,
+}
+
+const SCROLL_UP_LINE: ScreenEvent = ScreenEvent::Scroll(ScrollAmount::UpLine);
+const SCROLL_DOWN_LINE: ScreenEvent = ScreenEvent::Scroll(ScrollAmount::DownLine);
+const SCROLL_UP_WEEK: ScreenEvent = ScreenEvent::Scroll(ScrollAmount::UpWeek);
+const SCROLL_DOWN_WEEK: ScreenEvent = ScreenEvent::Scroll(ScrollAmount::DownWeek);
 
 trait Renderable {
     fn render(&self, area: Rect, buf: &mut Buffer);
@@ -132,17 +140,17 @@ impl<T: Backend> AppScreen for RealAppScreen<T> {
         while poll(timeout).map_err(WatchError::TerminalRead)? {
             match read().map_err(WatchError::TerminalRead)? {
                 Event::Key(event) => match event.code {
-                    KeyCode::Char('v') if event.modifiers == KeyModifiers::ALT => {
-                        return Ok(SCROLL_UP_FAST);
+                    KeyCode::Char('b') if event.modifiers == KeyModifiers::CONTROL => {
+                        return Ok(SCROLL_UP_WEEK);
                     }
-                    KeyCode::Char('v') if event.modifiers == KeyModifiers::CONTROL => {
-                        return Ok(SCROLL_DOWN_FAST);
+                    KeyCode::Char('f') if event.modifiers == KeyModifiers::CONTROL => {
+                        return Ok(SCROLL_DOWN_WEEK);
                     }
                     KeyCode::Char(c) => return Ok(ScreenEvent::Char(c)),
-                    KeyCode::Up => return Ok(SCROLL_UP_SLOW),
-                    KeyCode::Down => return Ok(SCROLL_DOWN_SLOW),
-                    KeyCode::PageUp => return Ok(SCROLL_UP_FAST),
-                    KeyCode::PageDown => return Ok(SCROLL_DOWN_FAST),
+                    KeyCode::Up => return Ok(SCROLL_UP_LINE),
+                    KeyCode::Down => return Ok(SCROLL_DOWN_LINE),
+                    KeyCode::PageUp => return Ok(SCROLL_UP_WEEK),
+                    KeyCode::PageDown => return Ok(SCROLL_DOWN_WEEK),
                     KeyCode::Enter => return Ok(ScreenEvent::Enter),
                     KeyCode::Left => return Ok(ScreenEvent::Left),
                     KeyCode::Right => return Ok(ScreenEvent::Right),
@@ -301,7 +309,7 @@ enum UserRequest {
     Resized,
     Timeout,
     ToggleReportMode,
-    Scroll(i8),
+    Scroll(ScrollAmount),
 }
 
 enum DisplayContent {
@@ -334,11 +342,28 @@ where
     report_mode: ReportMode,
     start_line: usize,
     line_count: usize,
+    section_starts: Vector<usize>,
     dates: &'a dyn Fn() -> DateRange,
     app_screen: &'a mut TAppScreen,
     storage: &'a mut TStorage,
     editor: &'a mut TEditor,
     clock: &'a mut TClock,
+}
+
+fn first_after(offsets: &Vector<usize>, target: usize) -> usize {
+    offsets
+        .iter()
+        .find(|o| **o > target)
+        .map(|o| *o)
+        .unwrap_or(target)
+}
+
+fn last_before(offsets: &Vector<usize>, target: usize) -> usize {
+    offsets
+        .iter()
+        .rfind(|o| **o < target)
+        .map(|o| *o)
+        .unwrap_or(target)
 }
 
 impl<'a, TAppScreen, TStorage, TEditor, TClock> WatchApp<'a, TAppScreen, TStorage, TEditor, TClock>
@@ -366,6 +391,7 @@ where
             report_mode: ReportMode::Detail,
             start_line: 0,
             line_count: 0,
+            section_starts: Vector::new(),
             menu,
             app_screen,
             storage,
@@ -391,17 +417,17 @@ where
         }
     }
 
-    fn scroll(&mut self, amount: i8) -> Result<UICommand> {
-        if amount < 0 {
-            let lines = (-amount) as usize;
-            if lines >= self.start_line {
-                self.start_line = 0;
-            } else {
-                self.start_line -= lines;
+    fn scroll(&mut self, amount: ScrollAmount) -> Result<UICommand> {
+        match amount {
+            ScrollAmount::DownLine if self.start_line < self.line_count - 1 => self.start_line += 1,
+            ScrollAmount::UpLine if self.start_line > 0 => self.start_line -= 1,
+            ScrollAmount::DownWeek => {
+                self.start_line = first_after(&self.section_starts, self.start_line);
             }
-        } else {
-            let new_start_line = self.start_line + amount as usize;
-            self.start_line = Ord::min(self.line_count, new_start_line);
+            ScrollAmount::UpWeek => {
+                self.start_line = last_before(&self.section_starts, self.start_line)
+            }
+            _ => (),
         }
         Ok(UICommand::Report(self.loaded.clone()))
     }
@@ -414,6 +440,7 @@ where
                 match report {
                     Ok(report) => {
                         self.line_count = report.report.line_count();
+                        self.section_starts = report.report.section_starts();
                         self.app_screen.draw(&report)
                     }
                     Err(error) => {
@@ -488,7 +515,7 @@ where
         if self.loaded.day_entries.is_empty() {
             self.loaded
                 .warnings
-                .push_front(format!("No day entries found in date range: {}.", dates));
+                .push_front(format!("No day entries found in date range: {dates}."));
         }
 
         Ok(UICommand::Report(self.loaded.clone()))
@@ -648,7 +675,7 @@ fn format_warnings(file: &LoadedFile) -> ParagraphBuilder {
         let style = Style::new().fg(Color::Red);
         for warning in file.warnings.iter() {
             builder
-                .add_styled(format!(" warning: {}", warning), style)
+                .add_styled(format!(" warning: {warning}"), style)
                 .new_line();
         }
     }
@@ -678,13 +705,13 @@ fn format_report(
 
 fn format_error(filename: &str, error: &anyhow::Error) -> ParagraphBuilder {
     let style = Style::new().fg(Color::Red);
-    let lines = format!("{:?}", error)
+    let lines = format!("{error:?}")
         .lines()
         .map(|s| s.to_string())
         .collect::<Vec<_>>();
     let mut builder = ParagraphBuilder::new();
     builder
-        .add_styled(format!("   filename: {}", filename), style)
+        .add_styled(format!("   filename: {filename}"), style)
         .new_line()
         .add_styled(
             format!(
@@ -696,7 +723,7 @@ fn format_error(filename: &str, error: &anyhow::Error) -> ParagraphBuilder {
         .new_line();
     for line in lines.iter().skip(1) {
         builder
-            .add_styled(format!("           : {}", line), style)
+            .add_styled(format!("           : {line}"), style)
             .new_line();
     }
     builder
@@ -856,5 +883,21 @@ mod tests {
             storage.timestamp(path.to_str().unwrap()).unwrap(),
             1717936495000
         );
+    }
+
+    #[test]
+    fn test_offsets() {
+        let start_offsets: Vector<usize> = vector!(0, 7, 12);
+        assert_eq!(first_after(&start_offsets, 0), 7);
+        assert_eq!(first_after(&start_offsets, 6), 7);
+        assert_eq!(first_after(&start_offsets, 7), 12);
+        assert_eq!(first_after(&start_offsets, 12), 12);
+        assert_eq!(first_after(&start_offsets, 13), 13);
+        assert_eq!(last_before(&start_offsets, 0), 0);
+        assert_eq!(last_before(&start_offsets, 1), 0);
+        assert_eq!(last_before(&start_offsets, 7), 0);
+        assert_eq!(last_before(&start_offsets, 8), 7);
+        assert_eq!(last_before(&start_offsets, 12), 7);
+        assert_eq!(last_before(&start_offsets, 13), 12);
     }
 }
