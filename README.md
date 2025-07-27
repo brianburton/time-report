@@ -52,7 +52,7 @@ It also listens for and responds to single character commands:
 
 If the report is too long to fit in the window you can scroll:
 
-* PageUp or Meta-v: Up several lines.
-* PageDown or Control-v: Down several lines.
+* PageUp or Control-b: Up one week.
+* PageDown or Control-f: Down one week.
 * Up Arrow: Up one line.
 * Down Arrow: Down one line.
